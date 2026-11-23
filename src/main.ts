@@ -1,18 +1,24 @@
-import { App, Notice, Plugin, PluginSettingTab, Setting, TFile, htmlToMarkdown, normalizePath, requestUrl } from 'obsidian';
+import { App, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, htmlToMarkdown, normalizePath, requestUrl } from 'obsidian';
 import { EMPTY_STATE, type PluginState, type Settings } from './types';
 import type { Env, Http, NoteMeta, VaultIO } from './io';
 import { randomHex } from './io';
 import { findClaudeCli, nodeExec } from './exec';
 import {
   type Ctx,
+  addLink,
   digestExists,
   extractPositions,
+  finishExercise,
   generateDigest,
   harvestAll,
   importSubstackRss,
   importSubstackZip,
+  nextQuestion,
   runDaily,
+  startExercise,
 } from './pipeline';
+import { sourceAtLine } from './digest';
+import { inFolder } from './sources';
 import { isDigestDue, localDate } from './scheduler';
 import { rewriteRate } from './shifts';
 
@@ -120,6 +126,45 @@ export default class ThinkingDigestPlugin extends Plugin {
       name: "Open today's digest",
       callback: () => this.openNote(`${this.state.settings.digestFolder}/${localDate(new Date())}`),
     });
+    this.addCommand({
+      id: 'add-link',
+      name: 'Add link',
+      callback: () =>
+        new AddLinkModal(this.app, (url, note) =>
+          this.guarded('Saving link', async (c) => {
+            const r = await addLink(c, url, note);
+            await this.openNote(r.path);
+            return r.bodyRead ? `Saved to ${r.path}.` : `Saved the link only (the page didn't share its text): ${r.path}.`;
+          }),
+        ).open(),
+    });
+    this.addCommand({ id: 'think-about-this', name: 'Think about this', callback: () => this.thinkAboutCurrent() });
+    this.addCommand({
+      id: 'next-question',
+      name: 'Next question',
+      callback: () =>
+        this.withExercise((path) =>
+          this.guarded('Next question', async (c) => {
+            const r = await nextQuestion(c, path);
+            return r.done ? 'That’s enough to write it up. Run "Finish exercise" (or keep going).' : 'New question added.';
+          }),
+        ),
+    });
+    this.addCommand({
+      id: 'finish-exercise',
+      name: 'Finish exercise',
+      callback: () =>
+        this.withExercise((path) =>
+          this.guarded('Writing your pondering', async (c) => {
+            const pondering = await finishExercise(c, path);
+            await this.openNote(pondering);
+            return `Pondering saved: ${pondering}.`;
+          }),
+        ),
+    });
+    this.registerObsidianProtocolHandler('thinking-digest', (params) => {
+      if (params.think) void this.startThinking(decodeURIComponent(params.think).replace(/\.md$/, ''));
+    });
 
     this.registerEvent(this.app.vault.on('rename', (file, oldPath) => this.trackRename(file.path, oldPath)));
     this.app.workspace.onLayoutReady(() => void this.maybeAutoRun());
@@ -187,6 +232,48 @@ export default class ThinkingDigestPlugin extends Plugin {
       });
     };
     input.click();
+  }
+
+  private async startThinking(source: string): Promise<void> {
+    await this.guarded('Starting a thinking exercise', async (c) => {
+      const path = await startExercise(c, source);
+      await this.openNote(path);
+      return 'Answer under the question, then run "Next question".';
+    });
+  }
+
+  private thinkAboutCurrent(): void {
+    const s = this.state.settings;
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const file = view?.file;
+    if (!view || !file) {
+      new Notice('Thinking Digest: open a note (or a digest item) first.');
+      return;
+    }
+    const path = file.path.replace(/\.md$/, '');
+    if (inFolder(path, s.exerciseFolder)) {
+      new Notice('Thinking Digest: this is already an exercise. Use "Next question" or "Finish exercise".');
+      return;
+    }
+    const source = inFolder(path, s.digestFolder) ? sourceAtLine(view.editor.getValue(), view.editor.getCursor().line) : path;
+    if (!source) {
+      new Notice('Thinking Digest: put your cursor inside a digest item first.');
+      return;
+    }
+    void this.startThinking(source);
+  }
+
+  private withExercise(run: (path: string) => Promise<void>): void {
+    const file = this.app.workspace.getActiveFile();
+    const path = file?.path.replace(/\.md$/, '');
+    if (!path || !inFolder(path, this.state.settings.exerciseFolder)) {
+      new Notice('Thinking Digest: open a thinking exercise first.');
+      return;
+    }
+    void (async () => {
+      await this.app.workspace.getActiveViewOfType(MarkdownView)?.save();
+      await run(path);
+    })();
   }
 
   private async openNote(path: string, notifyMissing = true): Promise<void> {
@@ -298,7 +385,10 @@ class DigestSettingTab extends PluginSettingTab {
       .addText((t) => t.setValue(s.substackUrl).onChange((v) => save({ substackUrl: v.trim() })));
 
     containerEl.createEl('h3', { text: 'Folders' });
-    const folder = (name: string, key: 'writingFolder' | 'digestFolder' | 'takesFolder' | 'positionsPath' | 'voiceRulesPath') =>
+    const folder = (
+      name: string,
+      key: 'writingFolder' | 'digestFolder' | 'takesFolder' | 'positionsPath' | 'voiceRulesPath' | 'clippingsFolder' | 'exerciseFolder' | 'ponderingFolder',
+    ) =>
       new Setting(containerEl).setName(name).addText((t) => t.setValue(s[key]).onChange((v) => v.trim() && save({ [key]: v.trim() })));
     const folders = (name: string, key: 'sourceFolders' | 'excludedFolders' | 'priorFolders', desc: string) =>
       new Setting(containerEl)
@@ -313,6 +403,12 @@ class DigestSettingTab extends PluginSettingTab {
     folder('Takes folder', 'takesFolder');
     folder('Positions note', 'positionsPath');
     folder('Voice rules note', 'voiceRulesPath');
+    folder('Clippings folder ("Add link" saves here)', 'clippingsFolder');
+    folder('Exercises folder', 'exerciseFolder');
+    folder('Ponderings folder', 'ponderingFolder');
+    new Setting(containerEl)
+      .setName('Questions per exercise')
+      .addSlider((sl) => sl.setLimits(3, 8, 1).setValue(s.maxRounds).setDynamicTooltip().onChange((v) => save({ maxRounds: v })));
 
     containerEl.createEl('h3', { text: 'Loop' });
     const today = localDate(new Date());
@@ -324,5 +420,60 @@ class DigestSettingTab extends PluginSettingTab {
           ? `No harvested takes yet (${harvested} digest(s) harvested).`
           : `Rewrite rate so far: ${Math.round(rate * 100)}% across ${harvested} digest(s). Lower means drafts sound more like you.`,
     });
+  }
+}
+
+class AddLinkModal extends Modal {
+  private url = '';
+  private note = '';
+
+  constructor(app: App, private onSubmit: (url: string, note: string) => Promise<void>) {
+    super(app);
+  }
+
+  async onOpen(): Promise<void> {
+    this.setTitle('Add link');
+    let urlInput: HTMLInputElement | null = null;
+    new Setting(this.contentEl).setName('Link').addText((t) => {
+      urlInput = t.inputEl;
+      t.setPlaceholder('https://…').onChange((v) => (this.url = v));
+      t.inputEl.style.width = '100%';
+    });
+    new Setting(this.contentEl)
+      .setName('First reaction (optional)')
+      .setDesc('One line on what you think. It seeds your take in the digest.')
+      .addTextArea((t) => {
+        t.setPlaceholder('this is wrong because…').onChange((v) => (this.note = v));
+        t.inputEl.rows = 3;
+        t.inputEl.style.width = '100%';
+      });
+    new Setting(this.contentEl).addButton((b) =>
+      b
+        .setButtonText('Save')
+        .setCta()
+        .onClick(() => this.submit()),
+    );
+    this.contentEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) this.submit();
+    });
+    try {
+      const clip = (await navigator.clipboard.readText()).trim();
+      if (/^https?:\/\/\S+$/.test(clip) && urlInput) {
+        (urlInput as HTMLInputElement).value = clip;
+        this.url = clip;
+      }
+    } catch {
+      // clipboard access denied: the field just stays empty
+    }
+  }
+
+  private submit(): void {
+    if (!this.url.trim()) return;
+    this.close();
+    void this.onSubmit(this.url.trim(), this.note);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
   }
 }

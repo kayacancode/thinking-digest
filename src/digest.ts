@@ -43,8 +43,35 @@ function renderTakeBlock(item: DigestItem, positionsPath: string): string[] {
   return lines;
 }
 
+/** Clicking it starts a thinking exercise on the source (handled by the plugin's URI handler). */
+export function thinkLink(source: string): string {
+  const encoded = encodeURIComponent(source).replace(/\(/g, '%28').replace(/\)/g, '%29');
+  return `[〰️ think about this](obsidian://thinking-digest?think=${encoded})`;
+}
+
+/**
+ * The source the cursor is "on" in a digest: the wikilink on an Also-new line,
+ * otherwise the **Source:** of the item section containing the line.
+ */
+export function sourceAtLine(md: string, line: number): string | null {
+  const lines = md.replace(/\r\n/g, '\n').split('\n');
+  const here = lines[line] ?? '';
+  const inline = here.match(/^\s*-\s*\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/);
+  if (inline) return inline[1].trim();
+  for (let i = Math.min(line, lines.length - 1); i >= 0; i--) {
+    if (!SECTION_HEADING.test(lines[i])) continue;
+    if (!ITEM_HEADING.test(lines[i])) return null;
+    for (let j = i + 1; j < lines.length && !SECTION_HEADING.test(lines[j]); j++) {
+      const src = lines[j].match(/^\*\*Source:\*\*\s*\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/);
+      if (src) return src[1].trim();
+    }
+    return null;
+  }
+  return null;
+}
+
 function renderItem(item: DigestItem, positionsPath: string): string {
-  const lines = [`## ${oneLine(item.title)} ^${item.id}`, `**Source:** [[${item.source}]]`];
+  const lines = [`## ${oneLine(item.title)} ^${item.id}`, `**Source:** [[${item.source}]] · ${thinkLink(item.source)}`];
   if (item.whatsNew.trim() !== '') lines.push('', oneLine(item.whatsNew));
   const claims = item.claims.slice(0, 4).map(oneLine).filter((c) => c !== '');
   if (claims.length > 0) lines.push('', '**What they claim**', ...claims.map((c) => `- ${c}`));
@@ -70,7 +97,7 @@ export function renderDigest(input: {
     ...input.items.map((item) => renderItem(item, input.positionsPath)),
   ];
   if (input.alsoNew.length > 0) {
-    blocks.push(['## Also new', ...input.alsoNew.map((a) => `- [[${a.source}]]: ${oneLine(a.line)}`)].join('\n'));
+    blocks.push(['## Also new', ...input.alsoNew.map((a) => `- [[${a.source}]]: ${oneLine(a.line)} · ${thinkLink(a.source)}`)].join('\n'));
   }
   if (input.shifts.trim() !== '') blocks.push(input.shifts.trim());
   return blocks.join('\n\n') + '\n';

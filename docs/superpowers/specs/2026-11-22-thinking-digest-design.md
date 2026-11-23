@@ -377,3 +377,41 @@ Each step writes its results before the next one starts. If a step fails, later 
 - **iCloud conflicts:** the plugin writes Positions and Voice rules, which she may edit on another device. Each write first re-reads the file and merges by block id, so her edits win over the plugin's.
 - **Cost:** about 30–50k input tokens on a weekday with priors, plus a one-time extraction over about 20 posts [INFERENCE]. Low single-digit dollars a month on Sonnet [INFERENCE]. The priors are capped (ledger entries, 40 Takes, 25 rules).
 - **Brand:** the working name stays until a final name is chosen.
+
+## 18. Rev 3 (2026-11-23): capture anything, thinking exercises
+
+**Capture.**
+- *Add link* (modal; the URL is pre-filled from the clipboard; optional first reaction) saves to `Clippings/` with Web-Clipper-shaped frontmatter (`title`, `source`, `author`, `site`, `published`, `created`).
+- How content is fetched (`src/capture.ts`):
+  - Articles: Readability.
+  - X posts: `publish.x.com/oembed`.
+  - Login-walled pages: Open Graph title and description.
+  - Fetch failures: the link alone is saved, and the user is told.
+- A first reaction is stored as `> [!take] My first reaction`. The digest prompt treats it as Kaya's own words and builds the take from it first (digest rule 9).
+- Obsidian Web Clipper, pointed at `Clippings/`, is the browser and iPhone path. No code needed.
+
+**Thinking exercise.** A Socratic exercise held in one note: `Thinking/Exercises/YYYY-MM-DD - <title>.md`.
+- *Think about this* starts it:
+  - from the current note;
+  - from the digest item under the cursor (`sourceAtLine`);
+  - from the `〰️ think about this` link on every digest item and Also-new line (`obsidian://thinking-digest?think=<path>`).
+- An open exercise for the same source is reopened rather than duplicated.
+- *Next question* asks one question at a time: claim → link to her positions → steelman → idea forks → so what.
+  - Each question adapts to her answers and asks a sharper follow-up when an answer is thin.
+  - It stops once it has enough, or at `maxRounds` (default 5).
+  - It refuses to continue until the last question has an answer.
+- *Finish exercise* writes `Pondering/〰️ <title>.md` in her Pondering template:
+  - fields: `Date created`, `Heterodox`, `Related to ?` (with links to source and positions), and the `Ponderings` tag;
+  - sections: Ideas i'm pondering, Insights that triggered ideas, and Idea Forks (People, Ideas, Steel man Counter);
+  - **only her answers are used**, and people are linked only when a `People pages/p- <Name>` note exists.
+- The exercise is then marked `status: done` with a link to the Pondering, and position extraction runs, so the new Pondering feeds the ledger.
+
+**Verified on real data (headless harness, CLI provider):**
+- Add link:
+  - a Paul Graham essay, with the full body;
+  - an X post, with its text and date;
+  - LinkedIn, saved as a link-only fallback.
+- Exercise on the essay:
+  - Q1 used her first reaction; Q2 tied to her network-shape position.
+  - Finish produced a faithful Pondering linked to 4 positions.
+  - Extraction then added 2 positions from it.

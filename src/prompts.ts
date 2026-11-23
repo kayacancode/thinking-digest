@@ -122,6 +122,7 @@ ${renderPriors(priors)}
 6. "whatsNew": one line saying what's new in this item.
 7. Every candidate you don't pick goes in "alsoNew" with a one-line summary.
 8. Use ONLY the candidate paths, position ids and prior paths given here, copied exactly. Never make up a path or id.
+9. A candidate may contain a "> [!take] My first reaction" callout. That is Kaya's OWN words, written when she saved it. Build the take from it first: keep her stance and phrasing, tighten it, and cite the candidate path itself in "groundedIn" (plus any positions it relies on).
 
 ## Output
 Return only a JSON object, no prose, in this exact shape:
@@ -318,4 +319,105 @@ ${sparks || '(none)'}`;
 
 export function parseShiftsResponse(text: string): ShiftsModel {
   return parseWith(ShiftsSchema, text, 'shifts response');
+}
+
+/* ─── Thinking exercise ────────────────────────────────────────────────── */
+
+const QuestionSchema = v.object({
+  done: v.optional(v.boolean(), false),
+  question: v.optional(v.nullable(v.string()), null),
+});
+
+export interface ExerciseContext {
+  title: string;
+  sourcePath: string;
+  excerpt: string;
+  positions: { id: string; topic: string; text: string }[];
+  rounds: { question: string; answer: string }[];
+  maxRounds: number;
+}
+
+function renderRounds(rounds: { question: string; answer: string }[]): string {
+  if (!rounds.length) return '(none yet)';
+  return rounds.map((r, i) => `Q${i + 1}: ${r.question}\nKaya: ${r.answer || '(no answer)'}`).join('\n\n');
+}
+
+export function buildQuestionPrompt(ctx: ExerciseContext): Prompt {
+  const system = `You run a short Socratic thinking exercise with Kaya about one thing she read or heard. You ask ONE question at a time. The goal is her thinking, not yours: never argue, summarize the source back, or offer your opinion.
+
+${KAYA_VOICE} Ask questions the way a sharp friend would: short, specific, casual, no preamble.
+
+Each question must be specific to this item and build on what she has already said. Over the exercise, cover what's missing from this list, roughly in order:
+1. what's the actual claim here, and does she buy it
+2. how it connects to (or cuts against) one of HER positions below; name the position in plain words
+3. the strongest counter to her view (steelman), and whether it moves her
+4. idea forks: what other ideas or people this makes her think of
+5. so what: what she'd do, build, or ask differently because of it
+
+Stop when you have enough for a real pondering: at least 3 answered questions with substance, or ${ctx.maxRounds} questions total. If her last answer is thin or dodges, ask a sharper follow-up instead of moving on.
+
+## Her positions
+${bulletList(ctx.positions.map(positionLine), '(none yet)')}
+
+## Output
+Return only JSON: {"done": false, "question": "<one question>"} or, when you have enough, {"done": true, "question": null}.`;
+  const user = `<item path="${ctx.sourcePath}" title="${ctx.title}">
+${ctx.excerpt}
+</item>
+
+## The exercise so far
+${renderRounds(ctx.rounds)}`;
+  return { system, user };
+}
+
+export function parseQuestionResponse(text: string): { done: boolean; question: string | null } {
+  const out = parseWith(QuestionSchema, text, 'question response');
+  if (!out.done && !out.question?.trim()) throw new Error('question response: "question" is empty while done is false');
+  return { done: out.done, question: out.question?.trim() || null };
+}
+
+const PonderingSchema = v.object({
+  title: v.pipe(v.string(), v.minLength(3)),
+  heterodox: v.optional(v.nullable(v.boolean()), null),
+  ideas: v.array(v.string()),
+  insights: v.optional(v.array(v.string()), []),
+  people: v.optional(v.array(v.string()), []),
+  forkIdeas: v.optional(v.array(v.string()), []),
+  steelman: v.optional(v.string(), ''),
+  relatedPositions: v.optional(v.array(v.string()), []),
+});
+
+export type PonderingResponse = v.InferOutput<typeof PonderingSchema>;
+
+export function buildPonderingPrompt(ctx: Omit<ExerciseContext, 'maxRounds'>): Prompt {
+  const system = `You turn Kaya's answers from a thinking exercise into one of her "pondering" notes. This is HER thinking: use only what she said in her answers. Never add ideas, claims, or opinions she didn't express. The source is context only; its claims are not hers.
+
+${KAYA_VOICE} Keep her phrasing wherever you can; tighten, don't rewrite.
+
+Fields:
+- "title": her main idea as one statement in her style, lowercase-ish, ending with " ..." (e.g. "the averaging in culture is a result of the shape of the network, not the algos ...").
+- "heterodox": true if her view goes against the common take, false if not, null if unclear.
+- "ideas": 2–5 bullets, first person, the ideas she's pondering.
+- "insights": 1–3 bullets on what in the source triggered them (attribute to the source).
+- "people": names she mentioned (people to talk to or who think about this), exactly as she wrote them.
+- "forkIdeas": other ideas she said this led to.
+- "steelman": the strongest counter as she stated or accepted it; "" if she didn't engage one.
+- "relatedPositions": ids of her positions below that this note supports, extends, or challenges.
+
+## Her positions
+${bulletList(ctx.positions.map(positionLine), '(none yet)')}
+
+## Output
+Return only JSON: {"title": "", "heterodox": null, "ideas": [], "insights": [], "people": [], "forkIdeas": [], "steelman": "", "relatedPositions": []}`;
+  const user = `<item path="${ctx.sourcePath}" title="${ctx.title}">
+${ctx.excerpt}
+</item>
+
+## The exercise
+${renderRounds(ctx.rounds)}`;
+  return { system, user };
+}
+
+export function parsePonderingResponse(text: string): PonderingResponse {
+  return parseWith(PonderingSchema, text, 'pondering response');
 }

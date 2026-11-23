@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseDigest, renderDigest, renderFailedDigest } from '../src/digest';
+import { parseDigest, renderDigest, renderFailedDigest, sourceAtLine, thinkLink } from '../src/digest';
 import type { DigestItem } from '../src/types';
 
 const takeItem: DigestItem = {
@@ -132,5 +132,28 @@ describe('renderFailedDigest', () => {
     expect(renderFailedDigest('2026-11-23', 'API returned 529.')).toBe(
       '> [!warning] Digest failed: API returned 529. Run "Generate today\'s digest" to retry.\n',
     );
+  });
+});
+
+describe('think about this', () => {
+  it('encodes paths with spaces and parentheses so the markdown link survives', () => {
+    const link = thinkLink('Granola notes/2026-11-10, Yirl (Alexa) __ Betaworks');
+    const url = link.match(/\]\((obsidian:\/\/[^)]+)\)$/)?.[1];
+    expect(url).toBeDefined();
+    expect(decodeURIComponent(new URL(url!).searchParams.get('think')!)).toBe(
+      'Granola notes/2026-11-10, Yirl (Alexa) __ Betaworks',
+    );
+  });
+
+  it('finds the item source from anywhere inside an item, and the line source in Also new', () => {
+    const md = render([takeItem, questionItem]);
+    const lines = md.split('\n');
+    const takeLine = lines.findIndex((l) => l.includes('It does not accumulate'));
+    const answerLine = lines.findIndex((l) => l === '**My answer:**');
+    const alsoLine = lines.findIndex((l) => l.startsWith('- [[Granola notes/standup]]'));
+    expect(sourceAtLine(md, takeLine)).toBe('Granola notes/2026-11-21, Stasht');
+    expect(sourceAtLine(md, answerLine)).toBe('Clippings/Agents are the new apps');
+    expect(sourceAtLine(md, alsoLine)).toBe('Granola notes/standup');
+    expect(sourceAtLine(md, 0)).toBeNull();
   });
 });

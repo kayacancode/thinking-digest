@@ -27,6 +27,10 @@ export interface Settings {
   takesFolder: string;
   positionsPath: string; // without .md
   voiceRulesPath: string; // without .md
+  clippingsFolder: string; // where "Add link" saves
+  exerciseFolder: string;
+  ponderingFolder: string;
+  maxRounds: number; // questions per thinking exercise
   dailyCap: number;
   digestTime: string; // "HH:MM"
   digestDays: number[]; // 0=Sun..6=Sat
@@ -51,6 +55,10 @@ export const DEFAULT_SETTINGS: Settings = {
   takesFolder: 'Thinking/Takes',
   positionsPath: 'Thinking/Positions',
   voiceRulesPath: 'Thinking/Voice rules',
+  clippingsFolder: 'Clippings',
+  exerciseFolder: 'Thinking/Exercises',
+  ponderingFolder: 'Pondering',
+  maxRounds: 5,
   dailyCap: 5,
   digestTime: '07:30',
   digestDays: [1, 2, 3, 4, 5],

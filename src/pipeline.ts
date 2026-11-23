@@ -23,14 +23,31 @@ import {
   buildExtractionPrompt,
   buildShiftsPrompt,
   buildVoicePrompt,
+  buildPonderingPrompt,
+  buildQuestionPrompt,
   parseDigestResponse,
   parseExtractionResponse,
+  parsePonderingResponse,
+  parseQuestionResponse,
   parseShiftsResponse,
   parseVoiceResponse,
+  type ExerciseContext,
 } from './prompts';
 import { renderShifts, rewriteRate } from './shifts';
 import { isShiftsDay, localDate, weekRange } from './scheduler';
 import { buildPriors, inFolder, listCandidates, ownWritingNotes } from './sources';
+import { type Clip, clipPath, extractPage, isXUrl, parseXOembed, renderClipping, xOembedUrl } from './capture';
+import {
+  type Round,
+  appendQuestion,
+  appendReadyNote,
+  exerciseNoteName,
+  markDone,
+  parseExercise,
+  ponderingNoteName,
+  renderNewExercise,
+  renderPondering,
+} from './exercise';
 
 const EXTRACT_BATCH = 5;
 const EXTRACT_BODY_CHARS = 12_000;
@@ -472,6 +489,143 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
     if (!opts.dryRun) await ctx.env.vault.write(target, renderFailedDigest(today, reason));
     throw err;
   }
+}
+
+/* ─── Capture ──────────────────────────────────────────────────────────── */
+
+const BROWSER_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36';
+
+export interface CaptureReport {
+  path: string;
+  bodyRead: boolean;
+}
+
+async function fetchClip(ctx: Ctx, url: string): Promise<Clip> {
+  const { hostname, pathname } = new URL(url);
+  const title = `${hostname.replace(/^www\./, '')}${pathname.replace(/\/+$/, '').replace(/\//g, ' ')}`;
+  const fallback: Clip = { url, title, author: '', site: hostname, published: '', html: '' };
+  try {
+    if (isXUrl(url)) {
+      const res = await ctx.env.http({ url: xOembedUrl(url) });
+      return res.status === 200 ? parseXOembed(res.text, url) : fallback;
+    }
+    const res = await ctx.env.http({ url, headers: { 'user-agent': BROWSER_UA, accept: 'text/html,application/xhtml+xml' } });
+    return res.status < 400 ? extractPage(res.text, url) : fallback;
+  } catch (err) {
+    ctx.env.log('fetch failed; saving the link only', { url, error: (err as Error).message });
+    return fallback;
+  }
+}
+
+/** Save any URL into the clippings folder; `note` is an optional first reaction. */
+export async function addLink(ctx: Ctx, url: string, note: string): Promise<CaptureReport> {
+  const clean = url.trim();
+  if (!/^https?:\/\/\S+$/i.test(clean)) throw new Error('That doesn’t look like a link (it needs http:// or https://).');
+  const clip = await fetchClip(ctx, clean);
+  const path = await uniqueNotePath(ctx, clipPath(clip, settingsOf(ctx).clippingsFolder));
+  await ctx.env.vault.write(path, renderClipping(clip, ctx.env.toMarkdown, ctx.env.now().toISOString(), note));
+  return { path, bodyRead: clip.html !== '' };
+}
+
+/* ─── Thinking exercise ────────────────────────────────────────────────── */
+
+const FALLBACK_QUESTION = "what's the actual claim here, and do you buy it?";
+
+async function exerciseContext(ctx: Ctx, sourcePath: string, rounds: Round[]): Promise<ExerciseContext> {
+  const s = settingsOf(ctx);
+  const md = await ctx.env.vault.read(sourcePath);
+  if (md === null) throw new Error(`Can't find ${sourcePath}.`);
+  const meta = ctx.env.vault.list().find((n) => n.path === sourcePath);
+  const fmTitle = meta?.frontmatter?.['title'];
+  const ledger = await readLedger(ctx);
+  return {
+    title: typeof fmTitle === 'string' && fmTitle.trim() ? fmTitle.trim() : sourcePath.split('/').pop() ?? sourcePath,
+    sourcePath,
+    excerpt: stripFrontmatter(md).trim().slice(0, s.excerptChars),
+    positions: livePositions(ledger).map((p) => ({ id: p.id, topic: p.topic, text: p.text })),
+    rounds,
+    maxRounds: s.maxRounds,
+  };
+}
+
+/** Start (or reopen) a thinking exercise about a note. Returns the exercise path. */
+export async function startExercise(ctx: Ctx, sourcePath: string): Promise<string> {
+  const s = settingsOf(ctx);
+  const open = ctx.env.vault
+    .list()
+    .find(
+      (n) =>
+        inFolder(n.path, s.exerciseFolder) &&
+        n.frontmatter?.['status'] === 'open' &&
+        n.frontmatter?.['source'] === `[[${sourcePath}]]`,
+    );
+  if (open) return open.path;
+
+  const ec = await exerciseContext(ctx, sourcePath, []);
+  const first = await askJson(llmOf(ctx), buildQuestionPrompt(ec), parseQuestionResponse);
+  const today = localDate(ctx.env.now());
+  const path = await uniqueNotePath(ctx, `${s.exerciseFolder}/${exerciseNoteName(ec.title, today)}`);
+  await ctx.env.vault.write(
+    path,
+    renderNewExercise({ source: sourcePath, title: ec.title, date: today, question: first.question ?? FALLBACK_QUESTION }),
+  );
+  return path;
+}
+
+export async function nextQuestion(ctx: Ctx, exercisePath: string): Promise<{ done: boolean }> {
+  const md = await ctx.env.vault.read(exercisePath);
+  if (md === null) throw new Error(`Can't find ${exercisePath}.`);
+  const ex = parseExercise(md);
+  if (!ex.source) throw new Error('This note isn’t a thinking exercise.');
+  if (ex.status === 'done') throw new Error('This exercise is already finished.');
+  const last = ex.rounds[ex.rounds.length - 1];
+  if (last && !last.answer) throw new Error('Answer the last question first (write under it).');
+
+  const ec = await exerciseContext(ctx, ex.source, ex.rounds);
+  const resp = ex.rounds.length >= ec.maxRounds ? { done: true, question: null } : await askJson(llmOf(ctx), buildQuestionPrompt(ec), parseQuestionResponse);
+  if (resp.done || !resp.question) {
+    await ctx.env.vault.write(exercisePath, appendReadyNote(md));
+    return { done: true };
+  }
+  await ctx.env.vault.write(exercisePath, appendQuestion(md, ex.rounds.length + 1, resp.question));
+  return { done: false };
+}
+
+/** Write the answers up as a Pondering in her voice. Returns the pondering path. */
+export async function finishExercise(ctx: Ctx, exercisePath: string): Promise<string> {
+  const s = settingsOf(ctx);
+  const md = await ctx.env.vault.read(exercisePath);
+  if (md === null) throw new Error(`Can't find ${exercisePath}.`);
+  const ex = parseExercise(md);
+  if (!ex.source) throw new Error('This note isn’t a thinking exercise.');
+  if (ex.status === 'done') throw new Error('This exercise is already finished.');
+  const answered = ex.rounds.filter((r) => r.answer);
+  if (!answered.length) throw new Error('Answer at least one question first.');
+
+  const ec = await exerciseContext(ctx, ex.source, answered);
+  const draft = await askJson(llmOf(ctx), buildPonderingPrompt(ec), parsePonderingResponse);
+  const ledger = await readLedger(ctx);
+  const ids = new Set(ledger.positions.map((p) => p.id));
+  const related = draft.relatedPositions.filter((id) => ids.has(id)).map((id) => `${s.positionsPath}#^${id}`);
+  const peopleLinks: Record<string, string> = {};
+  for (const name of draft.people) {
+    const page = `People pages/p- ${name}`;
+    if (ctx.env.vault.exists(page)) peopleLinks[name] = page;
+  }
+
+  const path = await uniqueNotePath(ctx, `${s.ponderingFolder}/${ponderingNoteName(draft.title)}`);
+  await ctx.env.vault.write(
+    path,
+    renderPondering({ draft, date: localDate(ctx.env.now()), source: ex.source, exercise: exercisePath, related, peopleLinks }),
+  );
+  await ctx.env.vault.write(exercisePath, markDone(md, path));
+  try {
+    await extractPositions(ctx, { dryRun: false });
+  } catch (err) {
+    ctx.env.log('positions update after exercise failed', { error: (err as Error).message });
+  }
+  return path;
 }
 
 /* ─── The daily run ────────────────────────────────────────────────────── */

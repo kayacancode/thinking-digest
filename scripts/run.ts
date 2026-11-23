@@ -3,9 +3,10 @@
  * Obsidian. Reads come from the vault; EVERY write goes to a sandbox folder
  * (reads check the sandbox first), so the vault itself is never modified.
  *
- *   ANTHROPIC_API_KEY=… npx tsx scripts/run.ts <vault> <sandbox> <command> [YYYY-MM-DD]
+ *   ANTHROPIC_API_KEY=… DATE=YYYY-MM-DD npx tsx scripts/run.ts <vault> <sandbox> <command> [arg] [note]
  *   commands: import | positions-dry | positions | digest-dry | digest | harvest | daily
- *   optional date overrides "now" (local 08:00 on that date).
+ *             addlink <url> [note] | think <source path> | next <exercise path> | finish <exercise path>
+ *   DATE overrides "now" (local 08:00 on that date). Without ANTHROPIC_API_KEY the Claude CLI is used.
  */
 import { promises as fs, existsSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -16,11 +17,23 @@ import { EMPTY_STATE, type PluginState } from '../src/types';
 import type { Env, NoteMeta, VaultIO } from '../src/io';
 import { randomHex } from '../src/io';
 import { findClaudeCli, nodeExec } from '../src/exec';
-import { extractPositions, generateDigest, harvestAll, importSubstackRss, runDaily, type Ctx } from '../src/pipeline';
+import {
+  addLink,
+  extractPositions,
+  finishExercise,
+  generateDigest,
+  harvestAll,
+  importSubstackRss,
+  nextQuestion,
+  runDaily,
+  startExercise,
+  type Ctx,
+} from '../src/pipeline';
 
-const [vaultRoot, sandbox, command, dateArg] = process.argv.slice(2);
+const [vaultRoot, sandbox, command, arg = '', note = ''] = process.argv.slice(2);
+const dateArg = process.env.DATE;
 if (!vaultRoot || !sandbox || !command) {
-  console.error('usage: tsx scripts/run.ts <vault> <sandbox> <command> [YYYY-MM-DD]');
+  console.error('usage: tsx scripts/run.ts <vault> <sandbox> <command> [arg] [note]');
   process.exit(2);
 }
 
@@ -81,9 +94,9 @@ async function overlayVault(): Promise<VaultIO> {
 
 async function main(): Promise<void> {
   const statePath = path.join(sandbox, 'data.json');
-  const state: PluginState = existsSync(statePath)
-    ? { ...EMPTY_STATE(), ...(JSON.parse(await fs.readFile(statePath, 'utf8')) as Partial<PluginState>) }
-    : EMPTY_STATE();
+  const saved = existsSync(statePath) ? (JSON.parse(await fs.readFile(statePath, 'utf8')) as Partial<PluginState>) : {};
+  const base = EMPTY_STATE();
+  const state: PluginState = { ...base, ...saved, settings: { ...base.settings, ...(saved.settings ?? {}) } };
   if (process.env.ANTHROPIC_API_KEY) {
     state.settings.provider = 'api';
     state.settings.apiKey = process.env.ANTHROPIC_API_KEY;
@@ -120,6 +133,10 @@ async function main(): Promise<void> {
     case 'digest': result = await generateDigest(ctx, { dryRun: false }); break;
     case 'harvest': result = await harvestAll(ctx); break;
     case 'daily': result = await runDaily(ctx); break;
+    case 'addlink': result = await addLink(ctx, arg, note); break;
+    case 'think': result = await startExercise(ctx, arg); break;
+    case 'next': result = await nextQuestion(ctx, arg); break;
+    case 'finish': result = await finishExercise(ctx, arg); break;
     default: throw new Error(`unknown command ${command}`);
   }
   console.log(JSON.stringify({ command, provider: state.settings.provider, seconds: Math.round((Date.now() - t0) / 1000), result }, null, 2));
