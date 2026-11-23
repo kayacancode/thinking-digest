@@ -14,6 +14,8 @@
  */
 
 export interface Settings {
+  provider: 'cli' | 'api'; // cli = local Claude Code (`claude -p`, uses her subscription); api = Anthropic API key
+  cliPath: string; // empty = auto-detect
   apiKey: string;
   model: string;
   substackUrl: string;
@@ -36,6 +38,8 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  provider: 'cli',
+  cliPath: '',
   apiKey: '',
   model: 'claude-sonnet-5-5',
   substackUrl: 'https://kayajones.substack.com',

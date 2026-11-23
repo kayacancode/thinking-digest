@@ -1,0 +1,328 @@
+import { App, Notice, Plugin, PluginSettingTab, Setting, TFile, htmlToMarkdown, normalizePath, requestUrl } from 'obsidian';
+import { EMPTY_STATE, type PluginState, type Settings } from './types';
+import type { Env, Http, NoteMeta, VaultIO } from './io';
+import { randomHex } from './io';
+import { findClaudeCli, nodeExec } from './exec';
+import {
+  type Ctx,
+  digestExists,
+  extractPositions,
+  generateDigest,
+  harvestAll,
+  importSubstackRss,
+  importSubstackZip,
+  runDaily,
+} from './pipeline';
+import { isDigestDue, localDate } from './scheduler';
+import { rewriteRate } from './shifts';
+
+const CHECK_EVERY_MS = 5 * 60_000;
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function obsidianVault(app: App): VaultIO {
+  const fileOf = (path: string) => app.vault.getFileByPath(normalizePath(`${path}.md`));
+  const ensureFolder = async (path: string) => {
+    const parts = path.split('/').slice(0, -1);
+    for (let i = 1; i <= parts.length; i++) {
+      const dir = normalizePath(parts.slice(0, i).join('/'));
+      if (!app.vault.getAbstractFileByPath(dir)) await app.vault.createFolder(dir);
+    }
+  };
+  return {
+    list(): NoteMeta[] {
+      return app.vault.getMarkdownFiles().map((f) => ({
+        path: f.path.replace(/\.md$/, ''),
+        ctime: f.stat.ctime,
+        frontmatter: (app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined) ?? null,
+      }));
+    },
+    async read(path) {
+      const f = fileOf(path);
+      return f ? app.vault.read(f) : null;
+    },
+    async write(path, content) {
+      const f = fileOf(path);
+      if (f) return app.vault.modify(f, content);
+      await ensureFolder(path);
+      await app.vault.create(normalizePath(`${path}.md`), content);
+    },
+    exists(path) {
+      return fileOf(path) !== null;
+    },
+  };
+}
+
+const obsidianHttp: Http = async (req) => {
+  const res = await requestUrl({ url: req.url, method: req.method ?? 'GET', headers: req.headers, body: req.body, throw: false });
+  return { status: res.status, text: res.text };
+};
+
+export default class ThinkingDigestPlugin extends Plugin {
+  state: PluginState = EMPTY_STATE();
+  private running = false;
+
+  async onload(): Promise<void> {
+    await this.loadState();
+    this.addSettingTab(new DigestSettingTab(this.app, this));
+
+    this.addCommand({ id: 'generate-digest', name: "Generate today's digest", callback: () => this.guarded('Digest', (c) => runDaily(c)) });
+    this.addCommand({
+      id: 'generate-digest-dry-run',
+      name: 'Generate digest (dry run)',
+      callback: () =>
+        this.guarded('Dry run', async (c) => {
+          const r = await generateDigest(c, { dryRun: true });
+          if (r.path) await this.openNote(r.path);
+          return r.message;
+        }),
+    });
+    this.addCommand({
+      id: 'harvest-now',
+      name: 'Harvest now',
+      callback: () =>
+        this.guarded('Harvest', async (c) => {
+          const r = await harvestAll(c);
+          return `Harvested ${r.takes} take(s) from ${r.digests} digest(s); ${r.rejected} rejected.`;
+        }),
+    });
+    this.addCommand({
+      id: 'import-substack',
+      name: 'Import Substack',
+      callback: () =>
+        this.guarded('Substack import', async (c) => {
+          const r = await importSubstackRss(c);
+          const kept = r.keptEdits.length ? ` Kept your edits in ${r.keptEdits.length} note(s).` : '';
+          return `Substack: ${r.written} written, ${r.unchanged} unchanged.${kept}`;
+        }),
+    });
+    this.addCommand({ id: 'import-substack-export', name: 'Import Substack export…', callback: () => this.pickExportZip() });
+    this.addCommand({
+      id: 'update-positions',
+      name: 'Update positions now',
+      callback: () =>
+        this.guarded('Positions', async (c) => {
+          const r = await extractPositions(c, { dryRun: false });
+          return `Positions: ${r.sources} source(s) read, +${r.added}, ${r.superseded} updated, ${r.tensions} in tension.${r.failedBatches ? ` ${r.failedBatches} batch(es) failed; see console.` : ''}`;
+        }),
+    });
+    this.addCommand({
+      id: 'rebuild-positions-dry-run',
+      name: 'Rebuild positions (dry run)',
+      callback: () =>
+        this.guarded('Positions dry run', async (c) => {
+          const r = await extractPositions(c, { dryRun: true });
+          await this.openNote(`${this.state.settings.positionsPath} (dry run)`);
+          return `Dry-run ledger: ${r.added} position(s) from ${r.sources} source(s).`;
+        }),
+    });
+    this.addCommand({
+      id: 'open-today',
+      name: "Open today's digest",
+      callback: () => this.openNote(`${this.state.settings.digestFolder}/${localDate(new Date())}`),
+    });
+
+    this.registerEvent(this.app.vault.on('rename', (file, oldPath) => this.trackRename(file.path, oldPath)));
+    this.app.workspace.onLayoutReady(() => void this.maybeAutoRun());
+    this.registerInterval(window.setInterval(() => void this.maybeAutoRun(), CHECK_EVERY_MS));
+  }
+
+  private ctx(): Ctx {
+    const env: Env = {
+      vault: obsidianVault(this.app),
+      http: obsidianHttp,
+      exec: nodeExec,
+      cliPath: findClaudeCli(this.state.settings.cliPath),
+      toMarkdown: (html) => htmlToMarkdown(html),
+      now: () => new Date(),
+      newHex: randomHex,
+      log: (msg, extra) => console.log(`[thinking-digest] ${msg}`, extra ?? ''),
+    };
+    return { env, state: this.state, save: () => this.saveState() };
+  }
+
+  private async guarded(label: string, fn: (c: Ctx) => Promise<string>): Promise<void> {
+    if (this.running) {
+      new Notice('Thinking Digest is already running.');
+      return;
+    }
+    this.running = true;
+    const notice = new Notice(`Thinking Digest: ${label}…`, 0);
+    try {
+      const msg = await fn(this.ctx());
+      notice.hide();
+      new Notice(`Thinking Digest: ${msg}`, 8000);
+    } catch (err) {
+      notice.hide();
+      console.error('[thinking-digest]', err);
+      new Notice(`Thinking Digest: ${label} failed: ${(err as Error).message}`, 12000);
+    } finally {
+      this.running = false;
+    }
+  }
+
+  private async maybeAutoRun(): Promise<void> {
+    const s = this.state.settings;
+    const ready = s.provider === 'cli' ? !!findClaudeCli(s.cliPath) : !!s.apiKey;
+    if (!s.autoRun || !ready || this.running) return;
+    const today = localDate(new Date());
+    const exists = await digestExists(this.ctx(), today);
+    if (!isDigestDue({ now: new Date(), settings: s, lastRunDate: this.state.lastRunDate, digestExists: exists })) return;
+    await this.guarded('Digest', async (c) => {
+      const msg = await runDaily(c);
+      await this.openNote(`${s.digestFolder}/${today}`, false);
+      return msg;
+    });
+  }
+
+  private pickExportZip(): void {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.zip';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      void this.guarded('Substack export import', async (c) => {
+        const r = await importSubstackZip(c, new Uint8Array(await file.arrayBuffer()));
+        return `Substack export: ${r.written} written, ${r.unchanged} unchanged, ${r.keptEdits.length} kept your edits.`;
+      });
+    };
+    input.click();
+  }
+
+  private async openNote(path: string, notifyMissing = true): Promise<void> {
+    const file = this.app.vault.getFileByPath(normalizePath(`${path}.md`));
+    if (file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
+    else if (notifyMissing) new Notice(`Thinking Digest: ${path} doesn't exist yet.`);
+  }
+
+  private trackRename(newFile: string, oldFile: string): void {
+    const from = oldFile.replace(/\.md$/, '');
+    const to = newFile.replace(/\.md$/, '');
+    const move = (rec: Record<string, string>) => {
+      if (from in rec) {
+        rec[to] = rec[from];
+        delete rec[from];
+      }
+    };
+    move(this.state.handled);
+    move(this.state.extracted);
+    for (const imp of Object.values(this.state.imports)) if (imp.path === from) imp.path = to;
+    void this.saveState();
+  }
+
+  async loadState(): Promise<void> {
+    const saved = ((await this.loadData()) ?? {}) as Partial<PluginState>;
+    const base = EMPTY_STATE();
+    this.state = { ...base, ...saved, settings: { ...base.settings, ...(saved.settings ?? {}) } };
+  }
+
+  async saveState(): Promise<void> {
+    await this.saveData(this.state);
+  }
+}
+
+class DigestSettingTab extends PluginSettingTab {
+  constructor(app: App, private plugin: ThinkingDigestPlugin) {
+    super(app, plugin);
+  }
+
+  display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+    const s = this.plugin.state.settings;
+    const save = async (patch: Partial<Settings>) => {
+      Object.assign(s, patch);
+      await this.plugin.saveState();
+    };
+    const list = (v: string) => v.split(',').map((x) => x.trim()).filter(Boolean);
+
+    const detected = findClaudeCli(s.cliPath);
+    new Setting(containerEl)
+      .setName('Model provider')
+      .setDesc('Claude Code CLI runs on your Claude subscription; API uses an Anthropic API key.')
+      .addDropdown((d) =>
+        d
+          .addOption('cli', 'Claude Code CLI')
+          .addOption('api', 'Anthropic API key')
+          .setValue(s.provider)
+          .onChange(async (v) => {
+            await save({ provider: v === 'api' ? 'api' : 'cli' });
+            this.display();
+          }),
+      );
+    if (s.provider === 'cli') {
+      new Setting(containerEl)
+        .setName('Claude CLI path')
+        .setDesc(detected ? `Using ${detected}` : 'Not found. Install Claude Code or enter the full path to `claude`.')
+        .addText((t) => t.setPlaceholder('auto-detect').setValue(s.cliPath).onChange((v) => save({ cliPath: v.trim() })));
+    } else {
+      new Setting(containerEl)
+        .setName('Anthropic API key')
+        .setDesc('Stored in this plugin’s data, never in your notes.')
+        .addText((t) => {
+          t.inputEl.type = 'password';
+          t.setPlaceholder('sk-ant-…').setValue(s.apiKey).onChange((v) => save({ apiKey: v.trim() }));
+        });
+    }
+    new Setting(containerEl)
+      .setName('Model')
+      .addText((t) => t.setValue(s.model).onChange((v) => save({ model: v.trim() || s.model })));
+    new Setting(containerEl)
+      .setName('Run automatically')
+      .setDesc('Generate the digest when Obsidian is open on digest days after the digest time.')
+      .addToggle((t) => t.setValue(s.autoRun).onChange((v) => save({ autoRun: v })));
+    new Setting(containerEl)
+      .setName('Digest time')
+      .setDesc('24-hour HH:MM.')
+      .addText((t) => t.setValue(s.digestTime).onChange((v) => /^\d{2}:\d{2}$/.test(v) && save({ digestTime: v })));
+    new Setting(containerEl)
+      .setName('Digest days')
+      .setDesc('Comma-separated, e.g. Mon, Tue, Wed, Thu, Fri.')
+      .addText((t) =>
+        t.setValue(s.digestDays.map((d) => WEEKDAYS[d]).join(', ')).onChange((v) => {
+          const days = list(v).map((x) => WEEKDAYS.findIndex((w) => w.toLowerCase() === x.slice(0, 3).toLowerCase())).filter((d) => d >= 0);
+          if (days.length) void save({ digestDays: days });
+        }),
+      );
+    new Setting(containerEl)
+      .setName('Shifts day')
+      .addDropdown((d) => {
+        WEEKDAYS.forEach((w, i) => d.addOption(String(i), w));
+        d.setValue(String(s.shiftsDay)).onChange((v) => save({ shiftsDay: Number(v) }));
+      });
+    new Setting(containerEl)
+      .setName('Items per day')
+      .addSlider((sl) => sl.setLimits(1, 10, 1).setValue(s.dailyCap).setDynamicTooltip().onChange((v) => save({ dailyCap: v })));
+    new Setting(containerEl)
+      .setName('Substack URL')
+      .addText((t) => t.setValue(s.substackUrl).onChange((v) => save({ substackUrl: v.trim() })));
+
+    containerEl.createEl('h3', { text: 'Folders' });
+    const folder = (name: string, key: 'writingFolder' | 'digestFolder' | 'takesFolder' | 'positionsPath' | 'voiceRulesPath') =>
+      new Setting(containerEl).setName(name).addText((t) => t.setValue(s[key]).onChange((v) => v.trim() && save({ [key]: v.trim() })));
+    const folders = (name: string, key: 'sourceFolders' | 'excludedFolders' | 'priorFolders', desc: string) =>
+      new Setting(containerEl)
+        .setName(name)
+        .setDesc(desc)
+        .addText((t) => t.setValue(s[key].join(', ')).onChange((v) => save({ [key]: list(v) })));
+    folders('Source folders', 'sourceFolders', 'New notes here become digest candidates.');
+    folders('Excluded folders', 'excludedFolders', 'Never candidates (e.g. transcripts).');
+    folders('Prior folders', 'priorFolders', 'Your own thinking used to ground drafts.');
+    folder('Writing folder (Substack)', 'writingFolder');
+    folder('Digest folder', 'digestFolder');
+    folder('Takes folder', 'takesFolder');
+    folder('Positions note', 'positionsPath');
+    folder('Voice rules note', 'voiceRulesPath');
+
+    containerEl.createEl('h3', { text: 'Loop' });
+    const today = localDate(new Date());
+    const rate = rewriteRate(this.plugin.state.metrics, '0000-01-01', today);
+    const harvested = this.plugin.state.harvested.length;
+    containerEl.createEl('p', {
+      text:
+        rate === null
+          ? `No harvested takes yet (${harvested} digest(s) harvested).`
+          : `Rewrite rate so far: ${Math.round(rate * 100)}% across ${harvested} digest(s). Lower means drafts sound more like you.`,
+    });
+  }
+}
