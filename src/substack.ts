@@ -9,7 +9,7 @@ export function sanitizeTitle(title: string, maxLength: number): string {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, maxLength)
-    .trim();
+    .replace(/[\s.]+$/, '');
 }
 
 function utcDate(value: string): string | null {

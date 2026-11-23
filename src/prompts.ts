@@ -118,7 +118,7 @@ ${renderPriors(priors)}
 2. "claims": what the SOURCE asserts, at most 4, each attributed to the source ("they argue…", "<name> says…"). Never Kaya's opinions. Empty list if the source makes no real claims.
 3. "take": Kaya's take in first person, 2–4 sentences, in her voice and following every voice rule. It MUST be grounded: "groundedIn" lists at least one position id or prior path from above that the take actually relies on. If you cannot ground it honestly, set "take" to null and "groundedIn" to []. A weak or invented take is worse than none.
 4. "question": ALWAYS write one pointed question that would pull out Kaya's stance on this item, tied to the specific tension or idea in it (not "what do you think?"). It is shown instead of the take if the take is dropped.
-5. "tension": only when the source or the take genuinely contradicts one of the positions or prior notes you cited. kind "updates" = her view should move (the new evidence wins); kind "tension" = unresolved, both stand. "why" is one short line. Never invent tension; usually this is [].
+5. "tension": only when the source or the take genuinely contradicts one of the positions or prior notes you cited. kind "updates" = her view should move (the new evidence wins); kind "tension" = unresolved, both stand. "why" is one short line in Kaya's first person ("my view…", never "her view"). Never invent tension; usually this is [].
 6. "whatsNew": one line saying what's new in this item.
 7. Every candidate you don't pick goes in "alsoNew" with a one-line summary.
 8. Use ONLY the candidate paths, position ids and prior paths given here, copied exactly. Never make up a path or id.

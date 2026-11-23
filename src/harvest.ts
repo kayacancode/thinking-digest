@@ -1,7 +1,6 @@
 import { parseDigest, targetLink } from './digest';
+import { sanitizeTitle } from './substack';
 import type { DraftRecord, HarvestResult, MetricsRow, ParsedDigestItem, TakeOut, Verdict } from './types';
-
-const ILLEGAL_NAME_CHARS = /[\\/:*?"<>|#^[\]]/g;
 
 function judge(draft: DraftRecord, parsed: ParsedDigestItem | undefined): { verdict: Verdict; final: string } {
   if (!parsed) return { verdict: 'rejected', final: '' };
@@ -45,7 +44,7 @@ export function harvestDigest(date: string, md: string, drafts: Record<string, D
 }
 
 export function takeNoteName(take: TakeOut): string {
-  const title = take.title.replace(ILLEGAL_NAME_CHARS, '').replace(/\s+/g, ' ').trim().slice(0, 80).trim();
+  const title = sanitizeTitle(take.title, 80);
   return `${take.date} - ${title || 'Untitled'}`;
 }
 

@@ -1,0 +1,4 @@
+.callout[data-callout="take"] {
+  --callout-color: var(--color-purple-rgb);
+  --callout-icon: lucide-quote;
+}

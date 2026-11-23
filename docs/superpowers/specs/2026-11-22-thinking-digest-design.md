@@ -269,7 +269,9 @@ The section is left out if there are no Takes and no ledger changes that week.
 
 | Setting | Default |
 |---|---|
-| Anthropic API key | empty (required) |
+| Model provider | Claude Code CLI (`claude -p` with settings, tools, MCP and sessions off; runs on her subscription), or Anthropic API key |
+| Claude CLI path | auto-detected (`~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`) |
+| Anthropic API key | empty (only for the API provider) |
 | Model | the latest Claude Sonnet model id, looked up in Anthropic's model docs when the plugin is built; editable |
 | Substack URL | `https://kayajones.substack.com` |
 | Writing folder | `Writing/Substack` |
@@ -289,10 +291,11 @@ The API key stays in plugin data and is never written into the vault.
 
 ## 14. Architecture
 
-- TypeScript, esbuild, Jest and eslint (`eslint-plugin-obsidianmd`), following `~/betaworks/obsidian-granola-sync`'s setup.
+- TypeScript, esbuild, vitest; `tsc --noEmit` as the lint.
 - `isDesktopOnly: true` for v1.
 - The core uses no Node APIs. The zip import uses a pure-JS unzip library (e.g. `fflate`).
-- HTTP goes through Obsidian's `requestUrl`.
+- HTTP goes through Obsidian's `requestUrl`. The CLI provider spawns `claude` from Node (`src/exec.ts`); that's one reason the plugin is desktop-only.
+- `scripts/run.ts` runs the same pipeline headless against a vault on disk. It reads the vault, and every write goes to a sandbox folder.
 
 **Modules.** Pure modules take plain data and are unit-tested; the vault and network sit at the edges.
 
@@ -373,4 +376,4 @@ Each step writes its results before the next one starts. If a step fails, later 
 - **Granola re-sync** rewrites files. Using `created` handles new-ness, but notes re-synced with new content don't come back.
 - **iCloud conflicts:** the plugin writes Positions and Voice rules, which she may edit on another device. Each write first re-reads the file and merges by block id, so her edits win over the plugin's.
 - **Cost:** about 30–50k input tokens on a weekday with priors, plus a one-time extraction over about 20 posts [INFERENCE]. Low single-digit dollars a month on Sonnet [INFERENCE]. The priors are capped (ledger entries, 40 Takes, 25 rules).
-- **Brand:** the working name stays until the Stanley / mentor conversation is settled (Bestmate name rights).
+- **Brand:** the working name stays until a final name is chosen.
