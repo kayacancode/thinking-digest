@@ -1,6 +1,11 @@
-import type { Candidate, PluginState, PriorNote, PriorsPack, Settings } from './types';
+import type { Candidate, PluginState, PriorNote, PriorsPack, Settings, Thought } from './types';
+import { hashText } from './types';
 import type { NoteMeta, VaultIO } from './io';
 import { stripFrontmatter } from './io';
+import { diffThought, isPrivateNote } from './thoughts';
+
+const THOUGHT_WINDOW_MS = 7 * 86_400_000;
+const MAX_THOUGHT_NOTES = 15;
 
 const MAX_CANDIDATES = 25;
 const PRIOR_BODY_CHARS = 1500;
@@ -65,6 +70,39 @@ function priorKind(path: string, settings: Settings): PriorNote['kind'] | null {
   if (inFolder(path, 'Beliefs')) return 'belief';
   if (settings.priorFolders.some((f) => inFolder(path, f))) return 'spark';
   return null;
+}
+
+export interface ThoughtScan {
+  thoughts: Thought[];
+  /** Line hashes for every readable quick note; saved after a successful digest. */
+  snapshot: Record<string, string[]>;
+}
+
+/**
+ * Her quick notes, as new text since the last digest. A note seen for the first
+ * time counts as new only if edited in the last 7 days; older ones are taken as
+ * already read, so the first run doesn't dump months of notes on the model.
+ * Private notes are skipped and never enter the snapshot.
+ */
+export async function listThoughts(vault: VaultIO, settings: Settings, state: PluginState, now: Date): Promise<ThoughtScan> {
+  const notes = vault
+    .list()
+    .filter((n) => settings.thoughtFolders.some((f) => inFolder(n.path, f)))
+    .sort((a, b) => b.mtime - a.mtime);
+  const thoughts: Thought[] = [];
+  const snapshot: Record<string, string[]> = {};
+  for (const note of notes) {
+    const raw = await vault.read(note.path);
+    if (raw === null) continue;
+    const body = stripFrontmatter(raw);
+    if (isPrivateNote(note.frontmatter, body, settings.privateTag)) continue;
+    const fresh = !(note.path in state.thoughtSeen) && now.getTime() - note.mtime > THOUGHT_WINDOW_MS;
+    const seen = fresh ? body.split('\n').map((l) => hashText(l.trim())) : state.thoughtSeen[note.path] ?? [];
+    const thought = diffThought(note.path, titleOf(note), body, seen);
+    snapshot[note.path] = thought?.lineHashes ?? seen;
+    if (thought && thoughts.length < MAX_THOUGHT_NOTES) thoughts.push(thought);
+  }
+  return { thoughts, snapshot };
 }
 
 /** Notes of Kaya's own writing that can be extraction sources or priors. */

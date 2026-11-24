@@ -7,6 +7,7 @@ import type {
   Post,
   Settings,
   TakeOut,
+  ThreadDraft,
 } from './types';
 import { hashText, normalizeKey } from './types';
 import type { Env } from './io';
@@ -35,7 +36,8 @@ import {
 } from './prompts';
 import { renderShifts, rewriteRate } from './shifts';
 import { isShiftsDay, localDate, weekRange } from './scheduler';
-import { buildPriors, inFolder, listCandidates, ownWritingNotes } from './sources';
+import { buildPriors, inFolder, listCandidates, listThoughts, ownWritingNotes } from './sources';
+import { addToPondering, parseTickedThreads, quickThoughtNote, renderThreads } from './thoughts';
 import { type Clip, clipPath, extractPage, isXUrl, parseXOembed, renderClipping, xOembedUrl } from './capture';
 import {
   type Round,
@@ -254,6 +256,7 @@ export interface HarvestReport {
   takes: number;
   rejected: number;
   rewrote: number;
+  threadBullets: number; // ticked thread bullets added to Ponderings
 }
 
 async function uniqueNotePath(ctx: Ctx, base: string): Promise<string> {
@@ -268,10 +271,51 @@ async function writeTake(ctx: Ctx, take: TakeOut): Promise<string> {
   return path;
 }
 
+/** Add the thread bullets she ticked in a digest to her Ponderings (existing or new). */
+async function applyThreads(ctx: Ctx, date: string, md: string): Promise<number> {
+  const s = settingsOf(ctx);
+  const drafts = ctx.state.threadDrafts[date] ?? {};
+  const groups = new Map<string, { draft: ThreadDraft; bullets: { text: string; sources: string[] }[] }>();
+  for (const { id, text } of parseTickedThreads(md)) {
+    const draft = drafts[id];
+    if (!draft) continue;
+    const key = draft.pondering ?? `new:${draft.title}`;
+    const group = groups.get(key) ?? { draft, bullets: [] };
+    group.bullets.push({ text, sources: draft.sources });
+    groups.set(key, group);
+  }
+  let added = 0;
+  for (const { draft, bullets } of groups.values()) {
+    if (draft.pondering) {
+      const current = await ctx.env.vault.read(draft.pondering);
+      if (current === null) {
+        ctx.env.log('pondering for thread no longer exists; skipped', { pondering: draft.pondering });
+        continue;
+      }
+      await ctx.env.vault.write(draft.pondering, addToPondering(current, bullets, date));
+    } else {
+      const sources = [...new Set(bullets.flatMap((b) => b.sources))];
+      const path = await uniqueNotePath(ctx, `${s.ponderingFolder}/${ponderingNoteName(draft.title)}`);
+      await ctx.env.vault.write(
+        path,
+        renderPondering({
+          draft: { title: draft.title, heterodox: null, ideas: bullets.map((b) => b.text), insights: [], people: [], forkIdeas: [], steelman: '' },
+          date,
+          source: sources[0],
+          related: sources.slice(1),
+          peopleLinks: {},
+        }),
+      );
+    }
+    added += bullets.length;
+  }
+  return added;
+}
+
 export async function harvestAll(ctx: Ctx): Promise<HarvestReport> {
   const s = settingsOf(ctx);
   const today = localDate(ctx.env.now());
-  const report: HarvestReport = { digests: 0, takes: 0, rejected: 0, rewrote: 0 };
+  const report: HarvestReport = { digests: 0, takes: 0, rejected: 0, rewrote: 0, threadBullets: 0 };
   const due = Object.keys(ctx.state.drafts)
     .filter((d) => d < today && !ctx.state.harvested.includes(d))
     .sort();
@@ -289,8 +333,10 @@ export async function harvestAll(ctx: Ctx): Promise<HarvestReport> {
         report.takes += result.takes.length;
         report.rejected += result.rejected.length;
         report.rewrote += result.metrics.rewrote;
+        report.threadBullets += await applyThreads(ctx, date, md);
       }
       ctx.state.harvested.push(date);
+      delete ctx.state.threadDrafts[date];
       report.digests++;
     } catch (err) {
       ctx.env.log('harvest failed for digest', { date, error: (err as Error).message });
@@ -421,9 +467,11 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
 
   const llm = llmOf(ctx);
   const { candidates, overflow } = await listCandidates(ctx.env.vault, s, ctx.state, now);
-  if (!candidates.length) {
+  const { thoughts, snapshot } = await listThoughts(ctx.env.vault, s, ctx.state, now);
+  if (!candidates.length && !thoughts.length) {
     if (!opts.dryRun) {
       ctx.state.lastRunDate = today;
+      ctx.state.thoughtSeen = { ...ctx.state.thoughtSeen, ...snapshot };
       await ctx.save();
     }
     return { path: null, items: 0, alsoNew: 0, message: 'Nothing new since the last digest.' };
@@ -436,11 +484,23 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
     const live = livePositions(ledger).map((p) => ({ id: p.id, topic: p.topic, text: p.text }));
     const priors = await buildPriors(ctx.env.vault, s, live, rules);
 
-    const raw = await askJson(llm, buildDigestPrompt({ date: today, candidates, priors, cap: s.dailyCap }), parseDigestResponse);
+    const raw = await askJson(
+      llm,
+      buildDigestPrompt({ date: today, candidates, priors, cap: s.dailyCap, thoughts }),
+      parseDigestResponse,
+    );
+    const vaultPaths = ctx.env.vault.list().map((n) => n.path);
+    const ownWords = new Set([
+      ...ownWritingNotes(ctx.env.vault, s).map((n) => n.path),
+      ...thoughts.map((t) => t.path),
+      ...candidates.filter((c) => /\[!take\]\s*My first reaction/i.test(c.excerpt)).map((c) => c.path),
+    ]);
     const checked = checkDigest(raw, {
-      paths: new Set(ctx.env.vault.list().map((n) => n.path)),
+      paths: new Set(vaultPaths),
       positionIds: new Set(ledger.positions.map((p) => p.id)),
       candidates: new Set(candidates.map((c) => c.path)),
+      ponderings: new Set(vaultPaths.filter((p) => inFolder(p, s.ponderingFolder))),
+      ownWords,
     });
 
     const taken = new Set<string>();
@@ -456,6 +516,14 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
       tension: i.tension,
     }));
 
+    const threadDrafts: Record<string, ThreadDraft> = {};
+    const threadIds = new Set<string>();
+    for (const t of checked.threads) {
+      for (const b of t.bullets) {
+        threadDrafts[uniqueId('th', 4, threadIds, ctx.env.newHex)] = { pondering: t.pondering, title: t.title, text: b.text, sources: b.sources };
+      }
+    }
+
     let shifts = '';
     if (isShiftsDay(now, s)) {
       try {
@@ -465,13 +533,16 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
       }
     }
 
-    const md = renderDigest({ date: today, items, alsoNew: checked.alsoNew, shifts, positionsPath: s.positionsPath });
+    const extras = [renderThreads(threadDrafts), shifts].filter((x) => x.trim() !== '').join('\n\n');
+    const md = renderDigest({ date: today, items, alsoNew: checked.alsoNew, shifts: extras, positionsPath: s.positionsPath });
     await ctx.env.vault.write(target, md);
 
     if (!opts.dryRun) {
       const drafts: Record<string, DraftRecord> = {};
       for (const { id, whatsNew: _w, ...draft } of items) drafts[id] = draft;
       ctx.state.drafts[today] = drafts;
+      ctx.state.threadDrafts[today] = threadDrafts;
+      ctx.state.thoughtSeen = { ...ctx.state.thoughtSeen, ...snapshot };
       for (const c of candidates) ctx.state.handled[c.path] = today;
       for (const p of overflow) ctx.state.handled[p] = today;
       ctx.state.cutoff = now.toISOString();
@@ -482,7 +553,7 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
       path: target,
       items: items.length,
       alsoNew: checked.alsoNew.length,
-      message: `${opts.dryRun ? 'Dry run' : 'Digest'} ready: ${items.length} item(s), ${checked.alsoNew.length} also new.`,
+      message: `${opts.dryRun ? 'Dry run' : 'Digest'} ready: ${items.length} item(s), ${checked.alsoNew.length} also new, ${Object.keys(threadDrafts).length} thread bullet(s).`,
     };
   } catch (err) {
     const reason = (err as Error).message;
@@ -628,6 +699,22 @@ export async function finishExercise(ctx: Ctx, exercisePath: string): Promise<st
   return path;
 }
 
+/* ─── Quick thought ────────────────────────────────────────────────────── */
+
+/** Append one timestamped line to today's thoughts note in the first quick-notes folder. */
+export async function addQuickThought(ctx: Ctx, text: string): Promise<string> {
+  const clean = text.trim();
+  if (!clean) throw new Error('Type a thought first.');
+  const now = ctx.env.now();
+  const date = localDate(now);
+  const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const folder = settingsOf(ctx).thoughtFolders[0] ?? 'Fleeting Notes';
+  const path = `${folder}/Thoughts ${date}`;
+  const existing = await ctx.env.vault.read(path);
+  await ctx.env.vault.write(path, quickThoughtNote(existing, { date, time, text: clean, createdIso: now.toISOString() }));
+  return path;
+}
+
 /* ─── The daily run ────────────────────────────────────────────────────── */
 
 export async function runDaily(ctx: Ctx): Promise<string> {
@@ -648,7 +735,9 @@ export async function runDaily(ctx: Ctx): Promise<string> {
   });
   await step('Harvest', async () => {
     const r = await harvestAll(ctx);
-    return r.digests ? `Harvested ${r.takes} take(s) from ${r.digests} digest(s).` : null;
+    if (!r.digests) return null;
+    const threads = r.threadBullets ? ` Added ${r.threadBullets} thread bullet(s) to your Ponderings.` : '';
+    return `Harvested ${r.takes} take(s) from ${r.digests} digest(s).${threads}`;
   });
   await step('Positions', async () => {
     const r = await extractPositions(ctx, { dryRun: false });

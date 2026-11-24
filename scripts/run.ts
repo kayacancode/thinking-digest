@@ -19,6 +19,7 @@ import { randomHex } from '../src/io';
 import { findClaudeCli, nodeExec } from '../src/exec';
 import {
   addLink,
+  addQuickThought,
   extractPositions,
   finishExercise,
   generateDigest,
@@ -69,7 +70,8 @@ async function overlayVault(): Promise<VaultIO> {
     for (const p of walk(root)) {
       const file = path.join(root, `${p}.md`);
       const md = await fs.readFile(file, 'utf8');
-      metas.set(p, { path: p, ctime: statSync(file).birthtimeMs, frontmatter: frontmatterOf(md) });
+      const st = statSync(file);
+      metas.set(p, { path: p, ctime: st.birthtimeMs, mtime: st.mtimeMs, frontmatter: frontmatterOf(md) });
     }
   };
   await load(vaultRoot);
@@ -86,7 +88,7 @@ async function overlayVault(): Promise<VaultIO> {
     async write(p, content) {
       await fs.mkdir(path.dirname(file(sandbox, p)), { recursive: true });
       await fs.writeFile(file(sandbox, p), content);
-      metas.set(p, { path: p, ctime: Date.now(), frontmatter: frontmatterOf(content) });
+      metas.set(p, { path: p, ctime: Date.now(), mtime: Date.now(), frontmatter: frontmatterOf(content) });
     },
     exists: (p) => metas.has(p),
   };
@@ -136,6 +138,7 @@ async function main(): Promise<void> {
     case 'addlink': result = await addLink(ctx, arg, note); break;
     case 'think': result = await startExercise(ctx, arg); break;
     case 'next': result = await nextQuestion(ctx, arg); break;
+    case 'thought': result = await addQuickThought(ctx, arg); break;
     case 'finish': result = await finishExercise(ctx, arg); break;
     default: throw new Error(`unknown command ${command}`);
   }

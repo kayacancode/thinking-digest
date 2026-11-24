@@ -6,6 +6,7 @@ import { findClaudeCli, nodeExec } from './exec';
 import {
   type Ctx,
   addLink,
+  addQuickThought,
   digestExists,
   extractPositions,
   finishExercise,
@@ -39,6 +40,7 @@ function obsidianVault(app: App): VaultIO {
       return app.vault.getMarkdownFiles().map((f) => ({
         path: f.path.replace(/\.md$/, ''),
         ctime: f.stat.ctime,
+        mtime: f.stat.mtime,
         frontmatter: (app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined) ?? null,
       }));
     },
@@ -125,6 +127,14 @@ export default class ThinkingDigestPlugin extends Plugin {
       id: 'open-today',
       name: "Open today's digest",
       callback: () => this.openNote(`${this.state.settings.digestFolder}/${localDate(new Date())}`),
+    });
+    this.addCommand({
+      id: 'quick-thought',
+      name: 'Quick thought',
+      callback: () =>
+        new QuickThoughtModal(this.app, (text) =>
+          this.guarded('Saving thought', async (c) => `Added to ${await addQuickThought(c, text)}.`),
+        ).open(),
     });
     this.addCommand({
       id: 'add-link',
@@ -390,7 +400,7 @@ class DigestSettingTab extends PluginSettingTab {
       key: 'writingFolder' | 'digestFolder' | 'takesFolder' | 'positionsPath' | 'voiceRulesPath' | 'clippingsFolder' | 'exerciseFolder' | 'ponderingFolder',
     ) =>
       new Setting(containerEl).setName(name).addText((t) => t.setValue(s[key]).onChange((v) => v.trim() && save({ [key]: v.trim() })));
-    const folders = (name: string, key: 'sourceFolders' | 'excludedFolders' | 'priorFolders', desc: string) =>
+    const folders = (name: string, key: 'sourceFolders' | 'excludedFolders' | 'priorFolders' | 'thoughtFolders', desc: string) =>
       new Setting(containerEl)
         .setName(name)
         .setDesc(desc)
@@ -398,6 +408,11 @@ class DigestSettingTab extends PluginSettingTab {
     folders('Source folders', 'sourceFolders', 'New notes here become digest candidates.');
     folders('Excluded folders', 'excludedFolders', 'Never candidates (e.g. transcripts).');
     folders('Prior folders', 'priorFolders', 'Your own thinking used to ground drafts.');
+    folders('Quick-notes folders', 'thoughtFolders', 'Your running thoughts (Fleeting Notes). Read as your own words; new lines only. Quick thought writes to the first one.');
+    new Setting(containerEl)
+      .setName('Private tag')
+      .setDesc('Notes tagged with this (or with it set to true in frontmatter) are never read.')
+      .addText((t) => t.setValue(s.privateTag).onChange((v) => save({ privateTag: v.trim().replace(/^#/, '') })));
     folder('Writing folder (Substack)', 'writingFolder');
     folder('Digest folder', 'digestFolder');
     folder('Takes folder', 'takesFolder');
@@ -420,6 +435,37 @@ class DigestSettingTab extends PluginSettingTab {
           ? `No harvested takes yet (${harvested} digest(s) harvested).`
           : `Rewrite rate so far: ${Math.round(rate * 100)}% across ${harvested} digest(s). Lower means drafts sound more like you.`,
     });
+  }
+}
+
+class QuickThoughtModal extends Modal {
+  private text = '';
+
+  constructor(app: App, private onSubmit: (text: string) => Promise<void>) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.setTitle('Quick thought');
+    new Setting(this.contentEl).addTextArea((t) => {
+      t.setPlaceholder('what’s on your mind…').onChange((v) => (this.text = v));
+      t.inputEl.rows = 3;
+      t.inputEl.style.width = '100%';
+      window.setTimeout(() => t.inputEl.focus(), 0);
+    });
+    this.contentEl.createEl('p', { text: 'Enter saves · Shift+Enter for a new line', cls: 'setting-item-description' });
+    this.contentEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (!this.text.trim()) return;
+        this.close();
+        void this.onSubmit(this.text);
+      }
+    });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
   }
 }
 

@@ -31,6 +31,8 @@ export interface Settings {
   exerciseFolder: string;
   ponderingFolder: string;
   maxRounds: number; // questions per thinking exercise
+  thoughtFolders: string[]; // her own quick notes (read as her words, new lines only)
+  privateTag: string; // notes tagged #<this> or with `<this>: true` are never read
   dailyCap: number;
   digestTime: string; // "HH:MM"
   digestDays: number[]; // 0=Sun..6=Sat
@@ -59,6 +61,8 @@ export const DEFAULT_SETTINGS: Settings = {
   exerciseFolder: 'Thinking/Exercises',
   ponderingFolder: 'Pondering',
   maxRounds: 5,
+  thoughtFolders: ['Fleeting Notes'],
+  privateTag: 'private',
   dailyCap: 5,
   digestTime: '07:30',
   digestDays: [1, 2, 3, 4, 5],
@@ -82,6 +86,15 @@ export interface Post {
 }
 
 /* ─── Sources for the digest ───────────────────────────────────────────── */
+
+/** New text in one of her quick-notes since the plugin last read it. */
+export interface Thought {
+  path: string;
+  title: string;
+  newText: string; // lines not seen before
+  earlierText: string; // lines seen on earlier runs (context only)
+  lineHashes: string[]; // every current line, for the snapshot after a successful run
+}
 
 export interface Candidate {
   path: string;
@@ -177,9 +190,25 @@ export interface AlsoNewModel {
   line: string;
 }
 
+/** A proposed addition to one of her Ponderings, built from this week's thoughts and items. */
+export interface ThreadModel {
+  pondering: string | null; // existing Pondering path, or null for a new one
+  title: string; // new Pondering title (ignored when pondering is set)
+  bullets: { text: string; sources: string[] }[]; // her ideas, first person; sources = paths
+}
+
 export interface DigestModel {
   items: DigestItemModel[];
   alsoNew: AlsoNewModel[];
+  threads: ThreadModel[];
+}
+
+/** One proposed thread bullet, stored until she ticks or ignores it. */
+export interface ThreadDraft {
+  pondering: string | null;
+  title: string;
+  text: string;
+  sources: string[];
 }
 
 /** Stored per digest item in data.json; the harvester compares against it. */
@@ -260,6 +289,8 @@ export interface PluginState {
   knownRules: Record<string, string>; // vr id -> normalizeKey(text)
   rejectedRulePatterns: string[]; // normalizeKey(text) of deleted rules
   metrics: MetricsRow[];
+  thoughtSeen: Record<string, string[]>; // quick-note path -> hashes of lines already read
+  threadDrafts: Record<string, Record<string, ThreadDraft>>; // digest date -> th id -> proposal
 }
 
 export const EMPTY_STATE = (): PluginState => ({
@@ -277,6 +308,8 @@ export const EMPTY_STATE = (): PluginState => ({
   knownRules: {},
   rejectedRulePatterns: [],
   metrics: [],
+  thoughtSeen: {},
+  threadDrafts: {},
 });
 
 /** Lowercase, strip punctuation, collapse whitespace. Shared identity key for claims and rules. */

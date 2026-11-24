@@ -1,6 +1,6 @@
 {
   "name": "thinking-digest",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Daily digest that drafts your take on new meetings and clippings, grounded in your own writing.",
   "main": "main.js",

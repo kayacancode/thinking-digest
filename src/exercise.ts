@@ -119,7 +119,7 @@ export function renderPondering(a: {
   draft: PonderingDraft;
   date: string;
   source: string;
-  exercise: string;
+  exercise?: string; // the exercise that produced it, if any
   related: string[]; // extra paths or position links (already link targets, no brackets)
   peopleLinks: Record<string, string>; // display name -> existing people page path
 }): string {
@@ -135,7 +135,7 @@ export function renderPondering(a: {
     'Quality score:',
     'Related Beliefs:',
     `Related to ?:${yamlList([a.source, ...a.related])}`,
-    `exercise: ${JSON.stringify(`[[${a.exercise}]]`)}`,
+    ...(a.exercise ? [`exercise: ${JSON.stringify(`[[${a.exercise}]]`)}`] : []),
     'tags:',
     '  - Ponderings',
     '---',

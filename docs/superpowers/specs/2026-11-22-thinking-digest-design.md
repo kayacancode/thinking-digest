@@ -415,3 +415,33 @@ Each step writes its results before the next one starts. If a step fails, later 
   - Q1 used her first reaction; Q2 tied to her network-shape position.
   - Finish produced a faithful Pondering linked to 4 positions.
   - Extraction then added 2 positions from it.
+
+## 19. Rev 4 (2026-11-23): running notes and threads into Ponderings
+
+**Quick notes as her words.**
+- Notes in `thoughtFolders` (default `Fleeting Notes`) are read every run as Kaya's own words. Only **new lines** are read: a per-note snapshot of line hashes is kept in `thoughtSeen`. That works for notes she edits across several days, where creation time says nothing.
+- First contact: a note untouched for 7+ days becomes a silent baseline.
+- Skipped: notes tagged `#private` (inline or frontmatter tags), notes with `private: true`, and code blocks.
+- At most 15 notes per run, newest first.
+- The snapshot is saved only after a successful non-dry digest.
+
+**Own-words grounding (enforced in `checkDigest` via `ownWords`).**
+- A take may only be grounded in a position or in her own words: quick notes, posts, takes, ponderings, sparks, beliefs, or a clipping with a first reaction.
+- A meeting or article on its own is never grounding.
+
+**Threads.** The digest model proposes bullets for her Ponderings, built only from her words.
+- Each bullet needs at least one own-words source. Meetings may be added alongside, to show the thought recurring.
+- A thread either extends an existing Pondering (exact path) or proposes a new one. A new one needs 2+ distinct sources and a title.
+- Bullets are rendered under `## Threads` as `- [ ] text · [[sources]] ^th-xxxx`.
+- At the next harvest, **ticked** bullets (with her edited text) are applied:
+  - inside the Pondering's "Ideas i’m pondering" callout, replacing the template's empty bullet;
+  - or, for free-form Ponderings, under `### Threads (date)`;
+  - or in a new Pondering written in her template.
+- Unticked bullets are dropped. Nothing changes a Pondering without a tick.
+
+**Quick thought.** A modal (Enter saves) appends `- HH:MM text` to `<first thought folder>/Thoughts YYYY-MM-DD`.
+
+**Verified on real data (sandbox):**
+- Her real Fleeting Notes from this week (e.g. "Euler, NewCo") produced a new-Pondering thread that recurred across her note and two meetings.
+- After own-words enforcement, takes cite only positions and her notes.
+- A quick thought surfaced as a thread extending the existing frontier-map Pondering. Ticked with edited text, it landed inside the callout on harvest, and the proposal was cleared.

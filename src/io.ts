@@ -8,6 +8,7 @@
 export interface NoteMeta {
   path: string;
   ctime: number; // ms
+  mtime: number; // ms
   frontmatter: Record<string, unknown> | null;
 }
 

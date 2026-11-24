@@ -7,6 +7,7 @@ import type {
   PriorsPack,
   ProposedRule,
   ShiftsModel,
+  Thought,
 } from './types';
 
 export interface Prompt {
@@ -68,9 +69,16 @@ const DigestItemSchema = v.object({
   tension: v.optional(v.array(TensionSchema), []),
 });
 
+const ThreadSchema = v.object({
+  pondering: v.optional(v.nullable(v.string()), null),
+  title: v.optional(v.string(), ''),
+  bullets: v.array(v.object({ text: v.string(), sources: v.optional(v.array(v.string()), []) })),
+});
+
 const DigestSchema = v.object({
   items: v.array(DigestItemSchema),
   alsoNew: v.optional(v.array(v.object({ source: v.string(), line: v.string() })), []),
+  threads: v.optional(v.array(ThreadSchema), []),
 });
 
 function renderPriors(priors: PriorsPack): string {
@@ -103,8 +111,10 @@ export function buildDigestPrompt(input: {
   candidates: Candidate[];
   priors: PriorsPack;
   cap: number;
+  thoughts?: Thought[];
 }): Prompt {
   const { date, candidates, priors, cap } = input;
+  const thoughts = input.thoughts ?? [];
   const system = `You draft Kaya's daily thinking digest. She reads it to sharpen her own thinking: for each item, she sees what the source claims next to what SHE thinks, and corrects your draft of her take.
 
 ${KAYA_VOICE}
@@ -116,13 +126,15 @@ ${renderPriors(priors)}
 ## Rules
 1. Pick at most ${cap} items. Prefer substance (ideas, claims, decisions, disagreements, surprising evidence) over logistics (scheduling, intros, status updates, admin). Boost items that touch one of her positions or prior notes. Fewer is fine when the rest are thin.
 2. "claims": what the SOURCE asserts, at most 4, each attributed to the source ("they argue…", "<name> says…"). Never Kaya's opinions. Empty list if the source makes no real claims.
-3. "take": Kaya's take in first person, 2–4 sentences, in her voice and following every voice rule. It MUST be grounded: "groundedIn" lists at least one position id or prior path from above that the take actually relies on. If you cannot ground it honestly, set "take" to null and "groundedIn" to []. A weak or invented take is worse than none.
+3. "take": Kaya's take in first person, 2–4 sentences, in her voice and following every voice rule. It MUST be grounded in HER words: "groundedIn" lists at least one position id, prior path, or thought path that the take actually relies on. A meeting or article is never grounding for her take (only a candidate with her "My first reaction" callout counts). If you cannot ground it honestly, set "take" to null and "groundedIn" to []. A weak or invented take is worse than none.
 4. "question": ALWAYS write one pointed question that would pull out Kaya's stance on this item, tied to the specific tension or idea in it (not "what do you think?"). It is shown instead of the take if the take is dropped.
 5. "tension": only when the source or the take genuinely contradicts one of the positions or prior notes you cited. kind "updates" = her view should move (the new evidence wins); kind "tension" = unresolved, both stand. "why" is one short line in Kaya's first person ("my view…", never "her view"). Never invent tension; usually this is [].
 6. "whatsNew": one line saying what's new in this item.
 7. Every candidate you don't pick goes in "alsoNew" with a one-line summary.
 8. Use ONLY the candidate paths, position ids and prior paths given here, copied exactly. Never make up a path or id.
 9. A candidate may contain a "> [!take] My first reaction" callout. That is Kaya's OWN words, written when she saved it. Build the take from it first: keep her stance and phrasing, tighten it, and cite the candidate path itself in "groundedIn" (plus any positions it relies on).
+10. "Kaya's thoughts" below are HER OWN quick notes from this week; the NEW part is what she wrote since the last digest. They are her words, like a first reaction: when an item touches one, build the take on it and cite the note's path in "groundedIn". Ignore todos, logistics and personal admin in them.
+11. "threads": how her thinking is building up this week, written into her Ponderings (prior notes with kind="pondering"). Each thread proposes 1–3 short bullets in her first person, made ONLY from her own words (thoughts, first reactions, takes, ponderings), never from a source's claims. Each bullet's "sources" lists EVERY note where that thought shows up this week: at least one of her own notes (thought, take, pondering, first reaction) first, plus any meetings where she raised it. A bullet backed only by a meeting or article is not hers and is dropped. Prefer extending an existing Pondering ("pondering": its exact path) when the thread fits one. Propose a NEW Pondering ("pondering": null, plus a "title" in her style ending with " ...") only when the same thought shows up in at least 2 different notes or items this week. No thread is better than a weak one; usually 0–3 threads.
 
 ## Output
 Return only a JSON object, no prose, in this exact shape:
@@ -139,7 +151,8 @@ Return only a JSON object, no prose, in this exact shape:
       "tension": [{ "target": "pos-xxxx" | "<prior path>", "why": "<one line>", "kind": "updates" | "tension" }]
     }
   ],
-  "alsoNew": [{ "source": "<candidate path>", "line": "<one line>" }]
+  "alsoNew": [{ "source": "<candidate path>", "line": "<one line>" }],
+  "threads": [{ "pondering": "<existing pondering path>" | null, "title": "<new pondering title, or empty>", "bullets": [{ "text": "<her idea, first person>", "sources": ["<path>"] }] }]
 }`;
 
   const sources = candidates
@@ -148,9 +161,20 @@ Return only a JSON object, no prose, in this exact shape:
         `<candidate path="${c.path}" kind="${c.kind}" created="${c.created}" title="${c.title}">\n${c.excerpt}\n</candidate>`,
     )
     .join('\n\n');
+  const thoughtBlock = thoughts.length
+    ? thoughts
+        .map(
+          (t) =>
+            `<thought path="${t.path}" title="${t.title}">\n${t.earlierText ? `<earlier>\n${t.earlierText}\n</earlier>\n` : ''}<new>\n${t.newText}\n</new>\n</thought>`,
+        )
+        .join('\n\n')
+    : '(none)';
   const user = `Today is ${date}. Here are the ${candidates.length} new candidates. Pick at most ${cap}; every other one goes in alsoNew.
 
-${sources}`;
+${sources || '(no new candidates)'}
+
+## Kaya's thoughts this week (her own words)
+${thoughtBlock}`;
   return { system, user };
 }
 
