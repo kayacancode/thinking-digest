@@ -4,6 +4,7 @@ An Obsidian plugin for thinking about what you read and hear. Capture anything y
 
 - **Capture anything.** Save links with *Add link* (articles, X posts, anything with a URL) or with Obsidian Web Clipper. Add a first reaction if you like; it seeds your take.
 - **Thinking exercises.** Choose *think about this* on any item: you get one question at a time, specific to the item and your positions. You answer in the note, and *Finish exercise* writes a 〰️ Pondering from your words only.
+- **Your running notes count.** Anything new you write in `Fleeting Notes` (or with *Quick thought*) is read as your own words. Takes build on it, and **Threads** propose bullets that grow your 〰️ Ponderings over the week. You tick what to keep. Notes tagged `#private` are never read.
 - **What they claim / My take.** Each item separates the source's claims from your take, so someone else's opinion never shows up as yours.
 - **Grounded.** Every draft cites your positions, posts or past takes. When it can't ground a take, it asks you one pointed question instead.
 - **Positions ledger** (`Thinking/Positions.md`). Your claims, one line each, extracted from your Substack, notes and takes. Newer views supersede older ones (the old ones are struck through, never deleted). Your edits always win.
@@ -12,8 +13,9 @@ An Obsidian plugin for thinking about what you read and hear. Capture anything y
 
 ## The loop
 
-1. **See something** → *Add link* (paste a URL, with an optional first reaction), or clip it with Web Clipper into `Clippings/`.
+1. **See something** → *Add link* (paste a URL, with an optional first reaction), or clip it with Web Clipper into `Clippings/`. **Think something** → write it in `Fleeting Notes` as you already do, or use *Quick thought*.
 2. **Each morning** → the digest drafts your take on new clippings and meetings, separating "what they claim" from "my take".
+   The digest's **Threads** section proposes bullets for your Ponderings. A bullet extends an existing Pondering, or starts a new one when the same thought came up in 2+ notes or meetings that week. Tick the ones you want, edit them if you like, and they're added on the next run.
 3. **The one or two that matter** → click *〰️ think about this* to answer 3–5 questions, then *Finish exercise* to get a Pondering.
 4. **Over time** → your Ponderings and edits update the positions ledger, and Friday's Shifts shows how your views moved.
 
@@ -52,6 +54,7 @@ Private by design: no notifications, no server. The only network calls are to th
 | Update positions now / Rebuild positions (dry run) | Updates the ledger / previews a fresh one |
 | Open today's digest | |
 | Add link | Saves any URL to `Clippings/`, with an optional first reaction |
+| Quick thought | Adds one timestamped line to `Fleeting Notes/Thoughts YYYY-MM-DD` (Enter to save) |
 | Think about this | Starts a thinking exercise on the current note, or on the digest item your cursor is in (same as the *〰️ think about this* links) |
 | Next question | Adds the next question to the open exercise (after you answer the last one) |
 | Finish exercise | Writes your answers up as a Pondering in `Pondering/`, then updates positions |
