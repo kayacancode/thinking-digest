@@ -1,68 +1,91 @@
 import { describe, it, expect } from 'vitest';
-import { addPracticeRow, checkPrep, checkSayIt, fillSayIt, meetingsDue, needsSayIt, seriesKey } from '../src/speaking';
+import { addPracticeRow, checkPrep, checkSayIt, fillSayIt, meetingsDue, needsSayIt, newMeetingsSince, seriesKey } from '../src/speaking';
 
-// Her real IC history from Granola.
-const ic = [
-  { path: 'Granola notes/2026-10-29, 💸Weekly IC touchbase', title: '💸Weekly IC touchbase', date: '2026-10-29' },
-  { path: 'Granola notes/2026-11-03, 💸weekly IC 🔒Decisions meeting', title: '💸weekly IC 🔒Decisions meeting', date: '2026-11-03' },
-  { path: 'Granola notes/2026-11-03, 💸weekly IC 🗣️Discussions meeting', title: '💸weekly IC 🗣️Discussions meeting', date: '2026-11-03' },
-  { path: 'Granola notes/2026-11-10, 💸weekly IC 🔒Decisions meeting', title: '💸weekly IC 🔒Decisions meeting', date: '2026-11-10' },
-  { path: 'Granola notes/2026-11-10, 💸weekly IC 🗣️Discussions meeting', title: '💸weekly IC 🗣️Discussions meeting', date: '2026-11-10' },
-  { path: 'Granola notes/2026-11-16, 💸weekly IC 🔒Decisions meeting', title: '💸weekly IC 🔒Decisions meeting', date: '2026-11-16' },
-  { path: 'Granola notes/2026-11-17, 💸weekly IC 🗣️Discussions meeting', title: '💸weekly IC 🗣️Discussions meeting', date: '2026-11-17' },
-  { path: 'Granola notes/2026-11-20, Jocelyn x Kaya', title: 'Jocelyn x Kaya', date: '2026-11-20' },
+const note = (date: string, time: string, title: string) => ({ path: `Granola notes/${date}, ${title}`, title, date, created: `${date}T${time}:00.000Z` });
+
+// Her real IC history from Granola, plus the week around it.
+const meetings = [
+  note('2026-10-29', '15:00', '💸Weekly IC touchbase'),
+  note('2026-11-03', '14:00', '💸weekly IC 🔒Decisions meeting'),
+  note('2026-11-03', '16:00', '💸weekly IC 🗣️Discussions meeting'),
+  note('2026-11-10', '14:00', '💸weekly IC 🔒Decisions meeting'),
+  note('2026-11-10', '16:00', '💸weekly IC 🗣️Discussions meeting'),
+  note('2026-11-16', '14:00', '💸weekly IC 🔒Decisions meeting'),
+  note('2026-11-16', '19:00', 'Kaya + JB'),
+  note('2026-11-17', '12:00', 'Agentic Nation with Rob'),
+  note('2026-11-17', '16:00', '💸weekly IC 🗣️Discussions meeting'),
+  note('2026-11-17', '18:00', 'Habitat computer <> betaworks'),
+  note('2026-11-20', '23:00', 'Jocelyn x Kaya'),
+  note('2026-11-23', '18:20', 'Stasht intro <> Betaworks'),
+  note('2026-11-23', '19:00', 'Kaya + JB'),
+  note('2026-11-23', '21:33', 'Black Nile AI platform for industrial plants with Sarah Khan'),
 ];
 const decisions = seriesKey('💸weekly IC 🔒Decisions meeting');
 const discussions = seriesKey('💸weekly IC 🗣️Discussions meeting');
 
 describe('meetingsDue', () => {
-  it('expects both IC meetings on a Tuesday and only Decisions on a Monday', () => {
-    expect(meetingsDue(ic, '2026-11-24').map((m) => m.key).sort()).toEqual([decisions, discussions].sort());
-    expect(meetingsDue(ic, '2026-11-23').map((m) => m.key)).toEqual([decisions]);
+  it('treats IC Decisions and Discussions as one IC on a Tuesday', () => {
+    const tue = meetingsDue(meetings, '2026-11-24');
+    expect(tue).toHaveLength(1);
+    expect(tue[0]).toMatchObject({ key: 'weekly ic', title: '💸weekly IC', since: '2026-11-17T16:00:00.000Z' });
+    expect(tue[0].keys.sort()).toEqual([decisions, discussions].sort());
   });
 
-  it('points at the latest instance, and skips one-offs and other weekdays', () => {
-    const tue = meetingsDue(ic, '2026-11-24');
-    expect(tue.find((m) => m.key === discussions)?.lastPath).toBe('Granola notes/2026-11-17, 💸weekly IC 🗣️Discussions meeting');
-    expect(meetingsDue(ic, '2026-11-26')).toEqual([]); // Thursday: no series meets then
+  it('preps only Decisions on a Monday, and nothing on a day no series meets', () => {
+    expect(meetingsDue(meetings, '2026-11-23').map((m) => m.title)).toEqual(['💸weekly IC 🔒Decisions meeting']);
+    expect(meetingsDue(meetings, '2026-11-26')).toEqual([]);
   });
 
   it("doesn't prep a meeting that already has today's note", () => {
-    const happened = [...ic, { path: 'x', title: '💸weekly IC 🗣️Discussions meeting', date: '2026-11-24' }];
-    expect(meetingsDue(happened, '2026-11-24').map((m) => m.key)).toEqual([decisions]);
+    const happened = [...meetings, note('2026-11-24', '16:00', '💸weekly IC 🗣️Discussions meeting')];
+    expect(meetingsDue(happened, '2026-11-24').map((m) => m.keys)).toEqual([[decisions]]);
+  });
+});
+
+describe('newMeetingsSince', () => {
+  it('lists the one-off meetings after the last IC, newest first, without 1:1s or meetings before it', () => {
+    const [ic] = meetingsDue(meetings, '2026-11-24');
+    expect(newMeetingsSince(meetings, ic, '2026-11-24').map((m) => m.title)).toEqual([
+      'Black Nile AI platform for industrial plants with Sarah Khan',
+      'Stasht intro <> Betaworks',
+      'Jocelyn x Kaya',
+      'Habitat computer <> betaworks',
+    ]);
   });
 });
 
 describe('checkPrep', () => {
-  const due = meetingsDue(ic, '2026-11-24');
-  it('keeps talking points that rest on her words or positions, drops the rest', () => {
+  const due = meetingsDue(meetings, '2026-11-24');
+  const blackNile = 'Granola notes/2026-11-23, Black Nile AI platform for industrial plants with Sarah Khan';
+  it('keeps points about this week’s meetings or her own words, drops the rest', () => {
     const out = checkPrep(
       [
         {
-          meeting: discussions,
+          meeting: 'weekly ic',
           points: [
-            { text: 'restraint  is the product', sources: ['Thinking/Sparks/AI in the room'] },
-            { text: 'they said agents are dead', sources: ['Granola notes/2026-11-17, 💸weekly IC 🗣️Discussions meeting'] },
+            { text: 'Black Nile:  plant AI, only works if it transfers', sources: [blackNile, 'Thinking/Takes/black nile'] },
+            { text: 'last week we said agents are dead', sources: ['Granola notes/2026-11-17, 💸weekly IC 🗣️Discussions meeting'] },
             { text: 'loops compound', sources: ['pos-7f3a'] },
           ],
           question: 'what would make us pass?',
-          sayOnce: ['Stasht', 'Stasht', ' '],
+          sayOnce: ['Black Nile', 'Black Nile', ' '],
         },
-        { meeting: 'some other meeting', points: [{ text: 'x', sources: ['Thinking/Sparks/AI in the room'] }], question: '', sayOnce: [] },
+        { meeting: 'some other meeting', points: [{ text: 'x', sources: [blackNile] }], question: '', sayOnce: [] },
       ],
       due,
-      new Set(['Thinking/Sparks/AI in the room']),
+      new Set(['Thinking/Takes/black nile']),
       new Set(['pos-7f3a']),
+      new Map([['weekly ic', new Set([blackNile])]]),
     );
     expect(out).toEqual([
       {
-        meeting: discussions,
+        meeting: 'weekly ic',
         points: [
-          { text: 'restraint is the product', sources: ['Thinking/Sparks/AI in the room'] },
+          { text: 'Black Nile: plant AI, only works if it transfers', sources: [blackNile, 'Thinking/Takes/black nile'] },
           { text: 'loops compound', sources: ['pos-7f3a'] },
         ],
         question: 'what would make us pass?',
-        sayOnce: ['Stasht'],
+        sayOnce: ['Black Nile'],
       },
     ]);
   });

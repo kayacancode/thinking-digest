@@ -10,18 +10,26 @@ export interface MeetingNote {
   path: string;
   title: string;
   date: string; // YYYY-MM-DD (local)
+  created: string; // ISO, orders meetings within a day
 }
 
+/**
+ * A recurring meeting expected today. Series that meet together (IC Decisions
+ * and IC Discussions on the same days) are one meeting to prep for.
+ */
 export interface DueMeeting {
-  key: string;
-  title: string; // latest title of the series
-  lastPath: string; // latest past instance, tells the model what this meeting is about
+  key: string; // seriesKey(title)
+  title: string; // "💸weekly IC" for a merged pair, else the latest title
+  keys: string[]; // the series in it
+  lastPaths: string[]; // latest past instance of each series: what this meeting is about
+  since: string; // ISO created of the latest past instance; "new" meetings come after it
 }
 
 const SERIES_WINDOW_DAYS = 42;
 const WEEKDAY_WINDOW_DAYS = 21;
 const MIN_OCCURRENCES = 3;
 export const MAX_PREP_MEETINGS = 3;
+const MAX_NEW_MEETINGS = 12;
 
 /** "💸weekly IC 🔒Decisions meeting" and "💸Weekly IC 🔒 Decisions meeting" are the same series. */
 export function seriesKey(title: string): string {
@@ -42,12 +50,7 @@ function weekday(date: string): number {
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }
 
-/**
- * Recurring meetings expected today: a series seen on 3+ different days in the
- * last 6 weeks, with an instance on today's weekday in the last 3 weeks, and
- * no note for today yet (if there is one, it already happened).
- */
-export function meetingsDue(meetings: MeetingNote[], today: string): DueMeeting[] {
+function seriesInWindow(meetings: MeetingNote[], today: string): Map<string, MeetingNote[]> {
   const t = dayNumber(today);
   const series = new Map<string, MeetingNote[]>();
   for (const m of meetings) {
@@ -56,19 +59,63 @@ export function meetingsDue(meetings: MeetingNote[], today: string): DueMeeting[
     const key = seriesKey(m.title);
     if (key) series.set(key, [...(series.get(key) ?? []), m]);
   }
-  const due: (DueMeeting & { last: string })[] = [];
-  for (const [key, notes] of series) {
+  return series;
+}
+
+/** Leading words two titles share: "💸weekly IC 🔒Decisions meeting" + "💸weekly IC 🗣️Discussions meeting" → "💸weekly IC". */
+function commonTitle(titles: string[]): string {
+  const words = titles.map((t) => t.split(/\s+/));
+  const shared: string[] = [];
+  for (let i = 0; i < words[0].length && words.every((w) => w[i] === words[0][i]); i++) shared.push(words[0][i]);
+  return shared.length ? shared.join(' ') : titles[0];
+}
+
+/**
+ * Recurring meetings expected today: a series seen on 3+ different days in the
+ * last 6 weeks, with an instance on today's weekday in the last 3 weeks, and
+ * no note for today yet (if there is one, it already happened). Series that
+ * start with the same two words and have met on the same day are merged.
+ */
+export function meetingsDue(meetings: MeetingNote[], today: string): DueMeeting[] {
+  const t = dayNumber(today);
+  const due: { keys: string[]; latest: MeetingNote[]; dates: Set<string> }[] = [];
+  for (const [key, notes] of seriesInWindow(meetings, today)) {
     if (notes.some((n) => n.date === today)) continue;
-    if (new Set(notes.map((n) => n.date)).size < MIN_OCCURRENCES) continue;
-    const onWeekday = notes.some((n) => t - dayNumber(n.date) <= WEEKDAY_WINDOW_DAYS && weekday(n.date) === weekday(today));
-    if (!onWeekday) continue;
-    const latest = [...notes].sort((a, b) => b.date.localeCompare(a.date))[0];
-    due.push({ key, title: latest.title, lastPath: latest.path, last: latest.date });
+    const dates = new Set(notes.map((n) => n.date));
+    if (dates.size < MIN_OCCURRENCES) continue;
+    if (!notes.some((n) => t - dayNumber(n.date) <= WEEKDAY_WINDOW_DAYS && weekday(n.date) === weekday(today))) continue;
+    const latest = [...notes].sort((a, b) => b.created.localeCompare(a.created))[0];
+    const prefix = key.split(' ').slice(0, 2).join(' ');
+    const group = due.find((g) => g.keys[0].split(' ').slice(0, 2).join(' ') === prefix && [...dates].some((d) => g.dates.has(d)));
+    if (group) {
+      group.keys.push(key);
+      group.latest.push(latest);
+      for (const d of dates) group.dates.add(d);
+    } else {
+      due.push({ keys: [key], latest: [latest], dates });
+    }
   }
   return due
-    .sort((a, b) => b.last.localeCompare(a.last) || a.title.localeCompare(b.title))
-    .slice(0, MAX_PREP_MEETINGS)
-    .map(({ last: _l, ...m }) => m);
+    .map((g) => {
+      const latest = [...g.latest].sort((a, b) => b.created.localeCompare(a.created));
+      const title = commonTitle(g.latest.map((n) => n.title));
+      return { key: seriesKey(title), title, keys: g.keys, lastPaths: latest.map((n) => n.path), since: latest[0].created };
+    })
+    .sort((a, b) => b.since.localeCompare(a.since) || a.title.localeCompare(b.title))
+    .slice(0, MAX_PREP_MEETINGS);
+}
+
+/**
+ * One-off meetings since the last instance of a recurring one (the companies
+ * and people she met that week), newest first. Other recurring meetings
+ * (1:1s, standups) are left out.
+ */
+export function newMeetingsSince(meetings: MeetingNote[], due: DueMeeting, today: string): MeetingNote[] {
+  const recurring = new Set([...seriesInWindow(meetings, today)].filter(([, notes]) => notes.length >= 2).map(([key]) => key));
+  return meetings
+    .filter((m) => m.created > due.since && m.date < today && !recurring.has(seriesKey(m.title)))
+    .sort((a, b) => b.created.localeCompare(a.created))
+    .slice(0, MAX_NEW_MEETINGS);
 }
 
 /* ─── Meeting prep in the digest ───────────────────────────────────────── */
@@ -81,18 +128,27 @@ export interface PrepModel {
 }
 
 /**
- * Keep only talking points that rest on her own words or positions (a meeting
- * or article alone isn't hers), at most 3, for meetings actually due.
+ * Keep talking points that rest on her own words, her positions, or a meeting
+ * she had since the last instance (what she'd report to the room). At most 3,
+ * for meetings actually due.
  */
-export function checkPrep(prep: PrepModel[], due: DueMeeting[], ownWords: Set<string>, positionIds: Set<string>): PrepModel[] {
+export function checkPrep(
+  prep: PrepModel[],
+  due: DueMeeting[],
+  ownWords: Set<string>,
+  positionIds: Set<string>,
+  newMeetings: Map<string, Set<string>>, // meeting key -> paths of meetings since its last instance
+): PrepModel[] {
   const keys = new Set(due.map((d) => d.key));
   const seen = new Set<string>();
   const out: PrepModel[] = [];
   for (const p of prep) {
     if (!keys.has(p.meeting) || seen.has(p.meeting)) continue;
     seen.add(p.meeting);
+    const fresh = newMeetings.get(p.meeting) ?? new Set<string>();
+    const valid = (s: string) => ownWords.has(s) || positionIds.has(s) || fresh.has(s);
     const points = p.points
-      .map((pt) => ({ text: pt.text.replace(/\s+/g, ' ').trim(), sources: [...new Set(pt.sources)].filter((s) => ownWords.has(s) || positionIds.has(s)) }))
+      .map((pt) => ({ text: pt.text.replace(/\s+/g, ' ').trim(), sources: [...new Set(pt.sources)].filter(valid) }))
       .filter((pt) => pt.text !== '' && pt.sources.length > 0)
       .slice(0, 3);
     if (!points.length) continue;
@@ -116,7 +172,8 @@ export function renderPrep(
         `> [!tip] 2 minutes, from your own notes. Slow is senior. [[${opts.practicePath}|Speaking practice]]`,
         '',
         '**Three talking points, one breath each**',
-        ...p.points.map((pt, i) => `${i + 1}. ${pt.text} ${pt.sources.map(link).join(' ')}`),
+        // One link per point (the meeting it's about, or the note it came from): it's read aloud, not audited.
+        ...p.points.map((pt, i) => `${i + 1}. ${pt.text} ${link(pt.sources[0])}`),
       ];
       if (p.question) lines.push('', `**The one question I'm bringing:** ${p.question}`);
       if (p.sayOnce.length) lines.push('', `**Say once, slowly, out loud:** ${p.sayOnce.join(' · ')}`);

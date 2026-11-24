@@ -45,12 +45,14 @@ import { isShiftsDay, localDate, weekRange } from './scheduler';
 import { buildPriors, inFolder, listCandidates, listMeetings, listThoughts, ownWritingNotes } from './sources';
 import {
   type DueMeeting,
+  type MeetingNote,
   type PrepModel,
   addPracticeRow,
   checkPrep,
   checkSayIt,
   fillSayIt,
   meetingsDue,
+  newMeetingsSince,
   needsSayIt,
   renderPrep,
   seriesKey,
@@ -484,7 +486,8 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
   const llm = llmOf(ctx);
   const { candidates, overflow } = await listCandidates(ctx.env.vault, s, ctx.state, now);
   const { thoughts, snapshot } = await listThoughts(ctx.env.vault, s, ctx.state, now);
-  const due = s.meetingPrep ? meetingsDue(listMeetings(ctx.env.vault, s), today) : [];
+  const meetingNotes = s.meetingPrep ? listMeetings(ctx.env.vault, s) : [];
+  const due = meetingsDue(meetingNotes, today);
   if (!candidates.length && !thoughts.length && !due.length) {
     if (!opts.dryRun) {
       ctx.state.lastRunDate = today;
@@ -549,7 +552,7 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
     let prep: PrepModel[] = [];
     if (due.length) {
       try {
-        prep = await buildPrep(ctx, llm, due, priors, thoughts, ownWords, positionIds);
+        prep = await buildPrep(ctx, llm, due, meetingNotes, priors, thoughts, ownWords, positionIds);
       } catch (err) {
         ctx.env.log('meeting prep failed; digest continues without it', { error: (err as Error).message });
       }
@@ -579,7 +582,12 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
       for (const { id, whatsNew: _w, ...draft } of items) drafts[id] = draft;
       ctx.state.drafts[today] = drafts;
       ctx.state.threadDrafts[today] = threadDrafts;
-      if (prep.length) ctx.state.prepped[today] = prep.map((p) => ({ key: p.meeting, title: due.find((d) => d.key === p.meeting)?.title ?? p.meeting }));
+      if (prep.length) {
+        ctx.state.prepped[today] = prep.flatMap((p) => {
+          const d = due.find((x) => x.key === p.meeting);
+          return d ? [{ key: d.key, title: d.title, keys: d.keys }] : [];
+        });
+      }
       ctx.state.thoughtSeen = { ...ctx.state.thoughtSeen, ...snapshot };
       for (const c of candidates) ctx.state.handled[c.path] = today;
       for (const p of overflow) ctx.state.handled[p] = today;
@@ -600,24 +608,33 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
   }
 }
 
-const PREP_EXCERPT_CHARS = 2500;
+const PREP_LAST_CHARS = 1500;
+const PREP_NEW_CHARS = 1200;
 
 async function buildPrep(
   ctx: Ctx,
   llm: Llm,
   due: DueMeeting[],
+  meetingNotes: MeetingNote[],
   priors: PriorsPack,
   thoughts: Thought[],
   ownWords: Set<string>,
   positionIds: Set<string>,
 ): Promise<PrepModel[]> {
+  const excerpt = async (path: string, chars: number) => stripFrontmatter((await ctx.env.vault.read(path)) ?? '').trim().slice(0, chars);
+  const today = localDate(ctx.env.now());
   const meetings = [];
+  const fresh = new Map<string, Set<string>>();
   for (const d of due) {
-    const last = stripFrontmatter((await ctx.env.vault.read(d.lastPath)) ?? '').trim();
-    meetings.push({ ...d, lastExcerpt: last.slice(0, PREP_EXCERPT_CHARS) });
+    const lastInstances = [];
+    for (const path of d.lastPaths) lastInstances.push({ path, excerpt: await excerpt(path, PREP_LAST_CHARS) });
+    const newMeetings = [];
+    for (const m of newMeetingsSince(meetingNotes, d, today)) newMeetings.push({ ...m, excerpt: await excerpt(m.path, PREP_NEW_CHARS) });
+    fresh.set(d.key, new Set(newMeetings.map((m) => m.path)));
+    meetings.push({ key: d.key, title: d.title, lastInstances, newMeetings });
   }
   const raw = await askJson(llm, buildPrepPrompt({ meetings, priors, thoughts }), parsePrepResponse);
-  return checkPrep(raw.prep, due, ownWords, positionIds);
+  return checkPrep(raw.prep, due, ownWords, positionIds, fresh);
 }
 
 /* ─── Speaking practice ────────────────────────────────────────────────── */
@@ -678,15 +695,17 @@ export async function logPractice(ctx: Ctx): Promise<number> {
   const meetings = listMeetings(ctx.env.vault, s);
   let added = 0;
   for (const date of dates) {
-    const left: { key: string; title: string }[] = [];
+    const left: PluginState['prepped'][string] = [];
     for (const p of ctx.state.prepped[date]) {
-      const note = meetings.find((m) => m.date === date && seriesKey(m.title) === p.key);
+      const note = meetings
+        .filter((m) => m.date === date && p.keys.includes(seriesKey(m.title)))
+        .sort((a, b) => a.created.localeCompare(b.created))[0];
       if (!note) {
         left.push(p);
         continue;
       }
       const md = await ctx.env.vault.read(s.speakingPracticePath);
-      const next = md === null ? null : addPracticeRow(md, { date, meetingPath: note.path, title: note.title });
+      const next = md === null ? null : addPracticeRow(md, { date, meetingPath: note.path, title: p.title });
       if (next !== null) {
         await ctx.env.vault.write(s.speakingPracticePath, next);
         added++;

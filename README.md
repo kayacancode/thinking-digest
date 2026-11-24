@@ -20,7 +20,7 @@ An Obsidian plugin for thinking about what you read and hear. Capture anything y
 4. **Over time** → your Ponderings and edits update the positions ledger, and Friday's Shifts shows how your views moved.
 5. **Say it out loud** → your thinking becomes something you can say in the room:
    - When a Spark gets a ticked thread, or *Finish exercise* writes a Pondering, its **Say it out loud** section is drafted: three one-breath points from that note, and the word you might get stuck on. Only blank sections are filled, never your own points.
-   - On mornings a recurring meeting is due (learned from your meeting notes, e.g. a weekly IC), the digest opens with **Before ‹meeting›**: three one-breath talking points from your own notes and positions, the one question you're bringing, and names to say once, slowly.
+   - On mornings a recurring meeting is due (learned from your meeting notes, e.g. a weekly IC), the digest opens with **Before ‹meeting›**: three one-breath talking points about the companies and people you met since that meeting last happened (what they do, and your read from your own takes and notes), the one question you're bringing, and names to say once, slowly. Meetings that run together (IC Decisions and Discussions) get one block.
    - The morning after a prepped meeting, its row is added to the *Practice log* table in `🗣️ Speaking Practice`, with the date and meeting filled in. You fill in the rest.
 
 Private by design: no notifications, no server. The only network calls are to the model and your Substack feed.

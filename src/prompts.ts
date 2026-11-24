@@ -463,7 +463,12 @@ const PrepSchema = v.object({
 });
 
 export function buildPrepPrompt(input: {
-  meetings: { key: string; title: string; lastPath: string; lastExcerpt: string }[];
+  meetings: {
+    key: string;
+    title: string;
+    lastInstances: { path: string; excerpt: string }[];
+    newMeetings: { path: string; title: string; date: string; excerpt: string }[];
+  }[];
   priors: PriorsPack;
   thoughts: Thought[];
 }): Prompt {
@@ -472,10 +477,13 @@ export function buildPrepPrompt(input: {
 ${KAYA_VOICE}
 
 For each meeting below:
-1. "points": exactly three talking points she could bring to THIS meeting, in her first person. Each must come from her OWN words or positions (her thoughts, takes, sparks, ponderings, posts, positions), never from someone else's claims. Pick what's live for her this week and relevant to what this meeting is about (see its last instance). "sources": the prior paths or position ids each point rests on, copied exactly.
-2. "question": the one question she's bringing to this meeting. Pointed and specific, one breath.
-3. "sayOnce": up to 5 names, companies or numbers she'll likely have to say in this meeting and can't swap for another word (from the points, the question, or the last instance). Prefer words that start with a vowel sound or a hard stop. [] if none.
-"meeting" is the meeting's key, copied exactly. No point is better than a weak one, but always try for three.
+1. "points": exactly three talking points she'd say in THIS meeting, in her first person.
+   - When the meeting lists "new since last time", the points are about those: the companies and people she met since this meeting last happened, which is what she brings to the room. Pick the three most worth the room's time, preferring ones she has written about (takes, thoughts, first reactions, sparks). One company per point, as "<Name>: <what they do>, <her read>", one breath. What they do comes from the meeting note. Her read comes ONLY from her own words or positions; if she hasn't written a read on it, say plainly what's notable and add no opinion. Skip internal meetings, 1:1s and admin.
+   - When nothing is new, use her own live thinking (thoughts, takes, sparks, positions) that fits what this meeting is about (see its last instances).
+   "sources": the meeting path each point is about, plus every note or position id her read came from, copied exactly.
+2. "question": the one question she's bringing, about one of those companies or the meeting's topic. Pointed, one breath.
+3. "sayOnce": up to 5 names (companies, founders) or numbers from the points and question that she can't swap for another word. Prefer ones starting with a vowel sound or a hard stop. [] if none.
+"meeting" is the meeting's key, copied exactly. Always try for three points.
 ${renderPriors(input.priors)}
 
 ## Output
@@ -484,7 +492,13 @@ Return only JSON: {"prep": [{"meeting": "<key>", "points": [{"text": "", "source
     ? input.thoughts.map((t) => `<thought path="${t.path}" title="${t.title}">\n${t.newText}\n</thought>`).join('\n\n')
     : '(none this week)';
   const meetings = input.meetings
-    .map((m) => `<meeting key="${m.key}" title="${m.title}">\n<last-instance path="${m.lastPath}">\n${m.lastExcerpt}\n</last-instance>\n</meeting>`)
+    .map((m) => {
+      const last = m.lastInstances.map((l) => `<last-instance path="${l.path}">\n${l.excerpt}\n</last-instance>`).join('\n');
+      const fresh = m.newMeetings.length
+        ? m.newMeetings.map((n) => `<new path="${n.path}" date="${n.date}" title="${n.title}">\n${n.excerpt}\n</new>`).join('\n')
+        : '(nothing new since last time)';
+      return `<meeting key="${m.key}" title="${m.title}">\n${last}\n<new-since-last-time>\n${fresh}\n</new-since-last-time>\n</meeting>`;
+    })
     .join('\n\n');
   return { system, user: `## Kaya's thoughts this week\n${thoughts}\n\n## Today's meetings\n${meetings}` };
 }

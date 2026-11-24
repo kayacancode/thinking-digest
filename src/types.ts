@@ -301,7 +301,7 @@ export interface PluginState {
   metrics: MetricsRow[];
   thoughtSeen: Record<string, string[]>; // quick-note path -> hashes of lines already read
   threadDrafts: Record<string, Record<string, ThreadDraft>>; // digest date -> th id -> proposal
-  prepped: Record<string, { key: string; title: string }[]>; // digest date -> meetings prepped that day (until logged)
+  prepped: Record<string, { key: string; title: string; keys: string[] }[]>; // digest date -> meetings prepped that day (until logged)
 }
 
 export const EMPTY_STATE = (): PluginState => ({

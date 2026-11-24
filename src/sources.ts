@@ -88,11 +88,10 @@ export function listMeetings(vault: VaultIO, settings: Settings): MeetingNote[] 
     .filter((n) => settings.sourceFolders.some((f) => inFolder(n.path, f)))
     .filter((n) => !settings.excludedFolders.some((f) => inFolder(n.path, f)))
     .filter((n) => candidateKind(n, settings) === 'meeting')
-    .map((n) => ({
-      path: n.path,
-      title: titleOf(n).replace(/^\d{4}-\d{2}-\d{2},\s*/, ''),
-      date: localDate(new Date(createdOf(n))),
-    }));
+    .map((n) => {
+      const created = createdOf(n);
+      return { path: n.path, title: titleOf(n).replace(/^\d{4}-\d{2}-\d{2},\s*/, ''), date: localDate(new Date(created)), created };
+    });
 }
 
 export interface ThoughtScan {
