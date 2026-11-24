@@ -152,6 +152,8 @@ Three points, one breath each, pause between them. If one doesn't fit in a breat
 2. 
 3. 
 
+Word I might get stuck on: 
+
 ## Smallest next step
 Something I can do in 15 minutes or less.
 - [ ] 

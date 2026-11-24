@@ -16,6 +16,7 @@ import {
   importSubstackZip,
   nextQuestion,
   runDaily,
+  sayItOutLoud,
   startExercise,
 } from './pipeline';
 import { sourceAtLine } from './digest';
@@ -90,7 +91,9 @@ export default class ThinkingDigestPlugin extends Plugin {
       callback: () =>
         this.guarded('Harvest', async (c) => {
           const r = await harvestAll(c);
-          return `Harvested ${r.takes} take(s) from ${r.digests} digest(s); ${r.rejected} rejected.`;
+          const threads = r.threadBullets ? ` Added ${r.threadBullets} thread bullet(s).` : '';
+          const say = r.sayIt ? ` Drafted "Say it out loud" on ${r.sayIt} note(s).` : '';
+          return `Harvested ${r.takes} take(s) from ${r.digests} digest(s); ${r.rejected} rejected.${threads}${say}`;
         }),
     });
     this.addCommand({
@@ -171,6 +174,21 @@ export default class ThinkingDigestPlugin extends Plugin {
             return `Pondering saved: ${pondering}.`;
           }),
         ),
+    });
+    this.addCommand({
+      id: 'say-it-out-loud',
+      name: 'Say it out loud for this note',
+      callback: () => {
+        const path = this.app.workspace.getActiveFile()?.path.replace(/\.md$/, '');
+        if (!path) {
+          new Notice('Thinking Digest: open a Spark or Pondering first.');
+          return;
+        }
+        void (async () => {
+          await this.app.workspace.getActiveViewOfType(MarkdownView)?.save();
+          await this.guarded('Drafting talking points', (c) => sayItOutLoud(c, path));
+        })();
+      },
     });
     this.registerObsidianProtocolHandler('thinking-digest', (params) => {
       if (params.think) void this.startThinking(decodeURIComponent(params.think).replace(/\.md$/, ''));
@@ -430,7 +448,7 @@ class DigestSettingTab extends PluginSettingTab {
     containerEl.createEl('h3', { text: 'Folders' });
     containerEl.createEl('p', { cls: 'setting-item-description', text: 'Pick folders from your vault: start typing to search. Subfolders are included.' });
     const exists = (p: string) => this.app.vault.getAbstractFileByPath(normalizePath(p)) !== null;
-    type FolderKey = 'writingFolder' | 'digestFolder' | 'takesFolder' | 'clippingsFolder' | 'exerciseFolder' | 'ponderingFolder' | 'sparksFolder';
+    type FolderKey = 'writingFolder' | 'digestFolder' | 'takesFolder' | 'clippingsFolder' | 'exerciseFolder' | 'ponderingFolder' | 'sparksFolder' | 'peopleFolder';
     const folder = (name: string, key: FolderKey, desc = '') =>
       new Setting(containerEl)
         .setName(name)
@@ -439,8 +457,11 @@ class DigestSettingTab extends PluginSettingTab {
           t.setValue(s[key]).onChange((v) => v.trim() && save({ [key]: normalizePath(v.trim()) }));
           new FolderSuggest(this.app, t.inputEl, (p) => void save({ [key]: p }));
         });
-    const note = (name: string, key: 'positionsPath' | 'voiceRulesPath') =>
-      new Setting(containerEl).setName(name).addText((t) => t.setValue(s[key]).onChange((v) => v.trim() && save({ [key]: v.trim() })));
+    const note = (name: string, key: 'positionsPath' | 'voiceRulesPath' | 'speakingPracticePath', desc = '') =>
+      new Setting(containerEl)
+        .setName(name)
+        .setDesc(desc)
+        .addText((t) => t.setValue(s[key]).onChange((v) => v.trim() && save({ [key]: v.trim().replace(/\.md$/, '') })));
     const folders = (name: string, key: 'sourceFolders' | 'excludedFolders' | 'priorFolders' | 'thoughtFolders', desc: string) => {
       const add = async (raw: string) => {
         const p = normalizePath(raw.trim());
@@ -487,11 +508,19 @@ class DigestSettingTab extends PluginSettingTab {
     folder('Digest folder', 'digestFolder');
     folder('Takes folder', 'takesFolder');
     folder('Exercises folder', 'exerciseFolder');
+    folder('People folder', 'peopleFolder', 'Pondering links people you name to their page here ("p- Name" or "Name").');
     note('Positions note', 'positionsPath');
     note('Voice rules note', 'voiceRulesPath');
     new Setting(containerEl)
       .setName('Questions per exercise')
       .addSlider((sl) => sl.setLimits(3, 8, 1).setValue(s.maxRounds).setDynamicTooltip().onChange((v) => save({ maxRounds: v })));
+
+    containerEl.createEl('h3', { text: 'Speaking' });
+    new Setting(containerEl)
+      .setName('Meeting prep')
+      .setDesc('On days a recurring meeting is due (learned from your meeting notes), the digest opens with three one-breath talking points, your one question, and names to say once slowly.')
+      .addToggle((t) => t.setValue(s.meetingPrep).onChange((v) => save({ meetingPrep: v })));
+    note('Speaking practice note', 'speakingPracticePath', 'After a prepped meeting, a row is added to its "Practice log" table with the date and meeting filled in.');
 
     containerEl.createEl('h3', { text: 'Loop' });
     const today = localDate(new Date());

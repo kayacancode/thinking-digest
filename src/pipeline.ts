@@ -5,8 +5,10 @@ import type {
   PluginState,
   Position,
   Post,
+  PriorsPack,
   Settings,
   TakeOut,
+  Thought,
   ThreadDraft,
 } from './types';
 import { hashText, normalizeKey } from './types';
@@ -25,18 +27,34 @@ import {
   buildShiftsPrompt,
   buildVoicePrompt,
   buildPonderingPrompt,
+  buildPrepPrompt,
   buildQuestionPrompt,
+  buildSayItPrompt,
   parseDigestResponse,
   parseExtractionResponse,
   parsePonderingResponse,
+  parsePrepResponse,
   parseQuestionResponse,
+  parseSayItResponse,
   parseShiftsResponse,
   parseVoiceResponse,
   type ExerciseContext,
 } from './prompts';
 import { renderShifts, rewriteRate } from './shifts';
 import { isShiftsDay, localDate, weekRange } from './scheduler';
-import { buildPriors, inFolder, listCandidates, listThoughts, ownWritingNotes } from './sources';
+import { buildPriors, inFolder, listCandidates, listMeetings, listThoughts, ownWritingNotes } from './sources';
+import {
+  type DueMeeting,
+  type PrepModel,
+  addPracticeRow,
+  checkPrep,
+  checkSayIt,
+  fillSayIt,
+  meetingsDue,
+  needsSayIt,
+  renderPrep,
+  seriesKey,
+} from './speaking';
 import { addToThread, parseTickedThreads, quickThoughtNote, renderSpark, renderThreads } from './thoughts';
 import { type Clip, clipPath, extractPage, isXUrl, parseXOembed, renderClipping, xOembedUrl } from './capture';
 import {
@@ -256,7 +274,8 @@ export interface HarvestReport {
   takes: number;
   rejected: number;
   rewrote: number;
-  threadBullets: number; // ticked thread bullets added to Ponderings
+  threadBullets: number; // ticked thread bullets added to Sparks and Ponderings
+  sayIt: number; // "Say it out loud" sections drafted
 }
 
 async function uniqueNotePath(ctx: Ctx, base: string): Promise<string> {
@@ -272,7 +291,7 @@ async function writeTake(ctx: Ctx, take: TakeOut): Promise<string> {
 }
 
 /** Add the thread bullets she ticked in a digest to her Sparks and Ponderings, or start new Sparks. */
-async function applyThreads(ctx: Ctx, date: string, md: string): Promise<number> {
+async function applyThreads(ctx: Ctx, date: string, md: string): Promise<{ added: number; touched: string[] }> {
   const s = settingsOf(ctx);
   const drafts = ctx.state.threadDrafts[date] ?? {};
   const groups = new Map<string, { draft: ThreadDraft; bullets: { text: string; sources: string[] }[] }>();
@@ -285,6 +304,7 @@ async function applyThreads(ctx: Ctx, date: string, md: string): Promise<number>
     groups.set(key, group);
   }
   let added = 0;
+  const touched: string[] = [];
   for (const { draft, bullets } of groups.values()) {
     if (draft.target) {
       const current = await ctx.env.vault.read(draft.target);
@@ -293,19 +313,22 @@ async function applyThreads(ctx: Ctx, date: string, md: string): Promise<number>
         continue;
       }
       await ctx.env.vault.write(draft.target, addToThread(current, bullets, date));
+      touched.push(draft.target);
     } else {
       const path = await uniqueNotePath(ctx, `${s.sparksFolder}/${sanitizeTitle(draft.title, 100) || 'Untitled spark'}`);
       await ctx.env.vault.write(path, renderSpark({ title: draft.title, oneLiner: draft.oneLiner, date, bullets }));
+      touched.push(path);
     }
     added += bullets.length;
   }
-  return added;
+  return { added, touched };
 }
 
 export async function harvestAll(ctx: Ctx): Promise<HarvestReport> {
   const s = settingsOf(ctx);
   const today = localDate(ctx.env.now());
-  const report: HarvestReport = { digests: 0, takes: 0, rejected: 0, rewrote: 0, threadBullets: 0 };
+  const report: HarvestReport = { digests: 0, takes: 0, rejected: 0, rewrote: 0, threadBullets: 0, sayIt: 0 };
+  const touched: string[] = [];
   const due = Object.keys(ctx.state.drafts)
     .filter((d) => d < today && !ctx.state.harvested.includes(d))
     .sort();
@@ -323,7 +346,9 @@ export async function harvestAll(ctx: Ctx): Promise<HarvestReport> {
         report.takes += result.takes.length;
         report.rejected += result.rejected.length;
         report.rewrote += result.metrics.rewrote;
-        report.threadBullets += await applyThreads(ctx, date, md);
+        const threads = await applyThreads(ctx, date, md);
+        report.threadBullets += threads.added;
+        touched.push(...threads.touched);
       }
       ctx.state.harvested.push(date);
       delete ctx.state.threadDrafts[date];
@@ -332,6 +357,7 @@ export async function harvestAll(ctx: Ctx): Promise<HarvestReport> {
       ctx.env.log('harvest failed for digest', { date, error: (err as Error).message });
     }
   }
+  report.sayIt = await fillSayItAll(ctx, [...new Set(touched)]);
 
   const oldest = addDays(today, -DRAFT_RETENTION_DAYS);
   for (const date of Object.keys(ctx.state.drafts)) {
@@ -458,7 +484,8 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
   const llm = llmOf(ctx);
   const { candidates, overflow } = await listCandidates(ctx.env.vault, s, ctx.state, now);
   const { thoughts, snapshot } = await listThoughts(ctx.env.vault, s, ctx.state, now);
-  if (!candidates.length && !thoughts.length) {
+  const due = s.meetingPrep ? meetingsDue(listMeetings(ctx.env.vault, s), today) : [];
+  if (!candidates.length && !thoughts.length && !due.length) {
     if (!opts.dryRun) {
       ctx.state.lastRunDate = today;
       ctx.state.thoughtSeen = { ...ctx.state.thoughtSeen, ...snapshot };
@@ -474,20 +501,20 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
     const live = livePositions(ledger).map((p) => ({ id: p.id, topic: p.topic, text: p.text }));
     const priors = await buildPriors(ctx.env.vault, s, live, rules);
 
-    const raw = await askJson(
-      llm,
-      buildDigestPrompt({ date: today, candidates, priors, cap: s.dailyCap, thoughts }),
-      parseDigestResponse,
-    );
     const vaultPaths = ctx.env.vault.list().map((n) => n.path);
+    const positionIds = new Set(ledger.positions.map((p) => p.id));
     const ownWords = new Set([
       ...ownWritingNotes(ctx.env.vault, s).map((n) => n.path),
       ...thoughts.map((t) => t.path),
       ...candidates.filter((c) => /\[!take\]\s*My first reaction/i.test(c.excerpt)).map((c) => c.path),
     ]);
+    const raw =
+      candidates.length || thoughts.length
+        ? await askJson(llm, buildDigestPrompt({ date: today, candidates, priors, cap: s.dailyCap, thoughts }), parseDigestResponse)
+        : { items: [], alsoNew: [], threads: [] };
     const checked = checkDigest(raw, {
       paths: new Set(vaultPaths),
-      positionIds: new Set(ledger.positions.map((p) => p.id)),
+      positionIds,
       candidates: new Set(candidates.map((c) => c.path)),
       threadTargets: new Set(
         ctx.env.vault
@@ -519,6 +546,14 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
       }
     }
 
+    let prep: PrepModel[] = [];
+    if (due.length) {
+      try {
+        prep = await buildPrep(ctx, llm, due, priors, thoughts, ownWords, positionIds);
+      } catch (err) {
+        ctx.env.log('meeting prep failed; digest continues without it', { error: (err as Error).message });
+      }
+    }
     let shifts = '';
     if (isShiftsDay(now, s)) {
       try {
@@ -529,7 +564,14 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
     }
 
     const extras = [renderThreads(threadDrafts), shifts].filter((x) => x.trim() !== '').join('\n\n');
-    const md = renderDigest({ date: today, items, alsoNew: checked.alsoNew, shifts: extras, positionsPath: s.positionsPath });
+    const md = renderDigest({
+      date: today,
+      prep: renderPrep(prep, due, { practicePath: s.speakingPracticePath, positionsPath: s.positionsPath }),
+      items,
+      alsoNew: checked.alsoNew,
+      shifts: extras,
+      positionsPath: s.positionsPath,
+    });
     await ctx.env.vault.write(target, md);
 
     if (!opts.dryRun) {
@@ -537,6 +579,7 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
       for (const { id, whatsNew: _w, ...draft } of items) drafts[id] = draft;
       ctx.state.drafts[today] = drafts;
       ctx.state.threadDrafts[today] = threadDrafts;
+      if (prep.length) ctx.state.prepped[today] = prep.map((p) => ({ key: p.meeting, title: due.find((d) => d.key === p.meeting)?.title ?? p.meeting }));
       ctx.state.thoughtSeen = { ...ctx.state.thoughtSeen, ...snapshot };
       for (const c of candidates) ctx.state.handled[c.path] = today;
       for (const p of overflow) ctx.state.handled[p] = today;
@@ -548,13 +591,112 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
       path: target,
       items: items.length,
       alsoNew: checked.alsoNew.length,
-      message: `${opts.dryRun ? 'Dry run' : 'Digest'} ready: ${items.length} item(s), ${checked.alsoNew.length} also new, ${Object.keys(threadDrafts).length} thread bullet(s).`,
+      message: `${opts.dryRun ? 'Dry run' : 'Digest'} ready: ${items.length} item(s), ${checked.alsoNew.length} also new, ${Object.keys(threadDrafts).length} thread bullet(s), ${prep.length} meeting prep(s).`,
     };
   } catch (err) {
     const reason = (err as Error).message;
     if (!opts.dryRun) await ctx.env.vault.write(target, renderFailedDigest(today, reason));
     throw err;
   }
+}
+
+const PREP_EXCERPT_CHARS = 2500;
+
+async function buildPrep(
+  ctx: Ctx,
+  llm: Llm,
+  due: DueMeeting[],
+  priors: PriorsPack,
+  thoughts: Thought[],
+  ownWords: Set<string>,
+  positionIds: Set<string>,
+): Promise<PrepModel[]> {
+  const meetings = [];
+  for (const d of due) {
+    const last = stripFrontmatter((await ctx.env.vault.read(d.lastPath)) ?? '').trim();
+    meetings.push({ ...d, lastExcerpt: last.slice(0, PREP_EXCERPT_CHARS) });
+  }
+  const raw = await askJson(llm, buildPrepPrompt({ meetings, priors, thoughts }), parsePrepResponse);
+  return checkPrep(raw.prep, due, ownWords, positionIds);
+}
+
+/* ─── Speaking practice ────────────────────────────────────────────────── */
+
+/** The "Say it out loud for this note" command. */
+export async function sayItOutLoud(ctx: Ctx, path: string): Promise<string> {
+  const md = await ctx.env.vault.read(path);
+  if (md === null) throw new Error(`Can't find ${path}.`);
+  if (!needsSayIt(md)) return 'This note already has your talking points; nothing changed.';
+  return (await fillSayItIfBlank(ctx, path)) ? 'Drafted "Say it out loud". Edit it freely.' : 'Couldn’t draft talking points for this note.';
+}
+
+/**
+ * Draft "Say it out loud" for a Spark or Pondering whose points are still
+ * blank. Never touches points she's written. Returns true when it wrote.
+ */
+async function fillSayItIfBlank(ctx: Ctx, path: string): Promise<boolean> {
+  const md = await ctx.env.vault.read(path);
+  if (md === null || !needsSayIt(md)) return false;
+  const s = settingsOf(ctx);
+  const rulesMd = await ctx.env.vault.read(s.voiceRulesPath);
+  const voiceRules = rulesMd ? activeRuleTexts(parseVoiceRules(rulesMd), s.maxActiveRules) : [];
+  const body = stripFrontmatter(md).replace(/%%[\s\S]*?%%/g, '').trim();
+  const title = path.split('/').pop() ?? path;
+  const say = checkSayIt(await askJson(llmOf(ctx), buildSayItPrompt({ title, body, voiceRules }), parseSayItResponse));
+  if (!say) return false;
+  // She may have edited while the model ran; only write if the note is unchanged.
+  if ((await ctx.env.vault.read(path)) !== md) return false;
+  await ctx.env.vault.write(path, fillSayIt(md, say));
+  return true;
+}
+
+/** Draft "Say it out loud" on each note, logging (not throwing) failures. */
+async function fillSayItAll(ctx: Ctx, paths: string[]): Promise<number> {
+  let n = 0;
+  for (const path of paths) {
+    try {
+      if (await fillSayItIfBlank(ctx, path)) n++;
+    } catch (err) {
+      ctx.env.log('say it out loud failed', { path, error: (err as Error).message });
+    }
+  }
+  return n;
+}
+
+const PRACTICE_LOG_DAYS = 3;
+
+/**
+ * After a prepped meeting happens (its note shows up), add a row for it to the
+ * Speaking Practice log, Setting filled in. Prepped meetings with no note after
+ * a few days are dropped.
+ */
+export async function logPractice(ctx: Ctx): Promise<number> {
+  const s = settingsOf(ctx);
+  const today = localDate(ctx.env.now());
+  const dates = Object.keys(ctx.state.prepped).filter((d) => d < today).sort();
+  if (!dates.length) return 0;
+  const meetings = listMeetings(ctx.env.vault, s);
+  let added = 0;
+  for (const date of dates) {
+    const left: { key: string; title: string }[] = [];
+    for (const p of ctx.state.prepped[date]) {
+      const note = meetings.find((m) => m.date === date && seriesKey(m.title) === p.key);
+      if (!note) {
+        left.push(p);
+        continue;
+      }
+      const md = await ctx.env.vault.read(s.speakingPracticePath);
+      const next = md === null ? null : addPracticeRow(md, { date, meetingPath: note.path, title: note.title });
+      if (next !== null) {
+        await ctx.env.vault.write(s.speakingPracticePath, next);
+        added++;
+      }
+    }
+    if (left.length && addDays(date, PRACTICE_LOG_DAYS) >= today) ctx.state.prepped[date] = left;
+    else delete ctx.state.prepped[date];
+  }
+  await ctx.save();
+  return added;
 }
 
 /* ─── Capture ──────────────────────────────────────────────────────────── */
@@ -676,8 +818,8 @@ export async function finishExercise(ctx: Ctx, exercisePath: string): Promise<st
   const related = draft.relatedPositions.filter((id) => ids.has(id)).map((id) => `${s.positionsPath}#^${id}`);
   const peopleLinks: Record<string, string> = {};
   for (const name of draft.people) {
-    const page = `People pages/p- ${name}`;
-    if (ctx.env.vault.exists(page)) peopleLinks[name] = page;
+    const page = [`${s.peopleFolder}/p- ${name}`, `${s.peopleFolder}/${name}`].find((p) => ctx.env.vault.exists(p));
+    if (page) peopleLinks[name] = page;
   }
 
   const path = await uniqueNotePath(ctx, `${s.ponderingFolder}/${ponderingNoteName(draft.title)}`);
@@ -686,6 +828,7 @@ export async function finishExercise(ctx: Ctx, exercisePath: string): Promise<st
     renderPondering({ draft, date: localDate(ctx.env.now()), source: ex.source, exercise: exercisePath, related, peopleLinks }),
   );
   await ctx.env.vault.write(exercisePath, markDone(md, path));
+  await fillSayItAll(ctx, [path]);
   try {
     await extractPositions(ctx, { dryRun: false });
   } catch (err) {
@@ -733,7 +876,12 @@ export async function runDaily(ctx: Ctx): Promise<string> {
     const r = await harvestAll(ctx);
     if (!r.digests) return null;
     const threads = r.threadBullets ? ` Added ${r.threadBullets} thread bullet(s) to your Sparks and Ponderings.` : '';
-    return `Harvested ${r.takes} take(s) from ${r.digests} digest(s).${threads}`;
+    const say = r.sayIt ? ` Drafted "Say it out loud" on ${r.sayIt} note(s).` : '';
+    return `Harvested ${r.takes} take(s) from ${r.digests} digest(s).${threads}${say}`;
+  });
+  await step('Practice log', async () => {
+    const n = await logPractice(ctx);
+    return n ? `Added ${n} meeting(s) to your speaking practice log.` : null;
   });
   await step('Positions', async () => {
     const r = await extractPositions(ctx, { dryRun: false });

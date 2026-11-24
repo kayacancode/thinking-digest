@@ -18,6 +18,10 @@ An Obsidian plugin for thinking about what you read and hear. Capture anything y
    The digest's **Threads** section proposes bullets for your Sparks and Ponderings. A bullet extends an open Spark or a Pondering, or starts a new Spark (in your ✨ Spark template) when the same thought came up in 2+ notes or meetings that week. Tick the ones you want, edit them if you like, and they're added on the next run. A Spark becomes a Pondering when you run *think about this* on it.
 3. **The one or two that matter** → click *〰️ think about this* to answer 3–5 questions, then *Finish exercise* to get a Pondering.
 4. **Over time** → your Ponderings and edits update the positions ledger, and Friday's Shifts shows how your views moved.
+5. **Say it out loud** → your thinking becomes something you can say in the room:
+   - When a Spark gets a ticked thread, or *Finish exercise* writes a Pondering, its **Say it out loud** section is drafted: three one-breath points from that note, and the word you might get stuck on. Only blank sections are filled, never your own points.
+   - On mornings a recurring meeting is due (learned from your meeting notes, e.g. a weekly IC), the digest opens with **Before ‹meeting›**: three one-breath talking points from your own notes and positions, the one question you're bringing, and names to say once, slowly.
+   - The morning after a prepped meeting, its row is added to the *Practice log* table in `🗣️ Speaking Practice`, with the date and meeting filled in. You fill in the rest.
 
 Private by design: no notifications, no server. The only network calls are to the model and your Substack feed.
 
@@ -58,6 +62,7 @@ Private by design: no notifications, no server. The only network calls are to th
 | Think about this | Starts a thinking exercise on the current note, or on the digest item your cursor is in (same as the *〰️ think about this* links) |
 | Next question | Adds the next question to the open exercise (after you answer the last one) |
 | Finish exercise | Writes your answers up as a Pondering in `Pondering/`, then updates positions |
+| Say it out loud for this note | Drafts the *Say it out loud* points on the open Spark or Pondering, if they're still blank |
 
 How it works with each item: rewrite the take, leave it as is, answer the question under **My answer:**, or delete the item to reject it.
 

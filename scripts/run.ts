@@ -25,8 +25,10 @@ import {
   generateDigest,
   harvestAll,
   importSubstackRss,
+  logPractice,
   nextQuestion,
   runDaily,
+  sayItOutLoud,
   startExercise,
   type Ctx,
 } from '../src/pipeline';
@@ -140,6 +142,8 @@ async function main(): Promise<void> {
     case 'next': result = await nextQuestion(ctx, arg); break;
     case 'thought': result = await addQuickThought(ctx, arg); break;
     case 'finish': result = await finishExercise(ctx, arg); break;
+    case 'sayit': result = await sayItOutLoud(ctx, arg); break;
+    case 'practice': result = await logPractice(ctx); break;
     default: throw new Error(`unknown command ${command}`);
   }
   console.log(JSON.stringify({ command, provider: state.settings.provider, seconds: Math.round((Date.now() - t0) / 1000), result }, null, 2));

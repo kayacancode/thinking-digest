@@ -3,6 +3,8 @@ import { hashText } from './types';
 import type { NoteMeta, VaultIO } from './io';
 import { stripFrontmatter } from './io';
 import { diffThought, isPrivateNote } from './thoughts';
+import { localDate } from './scheduler';
+import type { MeetingNote } from './speaking';
 
 const THOUGHT_WINDOW_MS = 7 * 86_400_000;
 const MAX_THOUGHT_NOTES = 15;
@@ -77,6 +79,20 @@ function priorKind(path: string, settings: Settings): PriorNote['kind'] | null {
   if (inFolder(path, settings.sparksFolder)) return 'spark';
   if (settings.priorFolders.some((f) => inFolder(path, f))) return 'note';
   return null;
+}
+
+/** Her meeting notes (Granola-style frontmatter) in the source folders, with local dates and titles. */
+export function listMeetings(vault: VaultIO, settings: Settings): MeetingNote[] {
+  return vault
+    .list()
+    .filter((n) => settings.sourceFolders.some((f) => inFolder(n.path, f)))
+    .filter((n) => !settings.excludedFolders.some((f) => inFolder(n.path, f)))
+    .filter((n) => candidateKind(n, settings) === 'meeting')
+    .map((n) => ({
+      path: n.path,
+      title: titleOf(n).replace(/^\d{4}-\d{2}-\d{2},\s*/, ''),
+      date: localDate(new Date(createdOf(n))),
+    }));
 }
 
 export interface ThoughtScan {

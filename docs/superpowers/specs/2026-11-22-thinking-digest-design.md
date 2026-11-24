@@ -472,3 +472,43 @@ Kaya wants to actually use her Sparks (`Thinking/Sparks`, ✨ Spark template, li
 **Verified (sandbox, real vault):**
 - A quick thought on AI restraint was routed to the existing "AI in the room" Spark. Ticked with edited text, it landed at the end of "What's new in my head", and the rest of the Spark was unchanged.
 - A thought recurring in two notes proposed a new Spark, "Personal software as zines", with a one-liner. Ticking 2 of 3 bullets wrote an open Spark with only those 2.
+
+## 21. Rev 6 (2026-11-23): speaking practice joins the chain
+
+Kaya is practicing speaking (`Thinking/🗣️ Speaking Practice`, sessions with Heather). Her Sparks already have "Say it out loud" (3 one-breath points + "Word I might get stuck on"), and her practice note has a "Before a meeting" checklist and a practice log. The plugin connects these to the thinking chain. Pure logic lives in `src/speaking.ts`.
+
+**Say it out loud.**
+- Triggers:
+  - after harvest, for every Spark or Pondering a ticked thread touched or created;
+  - after *Finish exercise*;
+  - on demand via *Say it out loud for this note*.
+- `needsSayIt` is true only when the section is missing or its numbered points are all blank, so her points are never overwritten.
+- How the section is filled:
+  - a Spark's blank `1.`–`3.` and stuck-word line are filled in place;
+  - a note without the section (her Ponderings) gets the section appended.
+- Points come only from that note, each one breath (~12 words). The stuck word must appear in the points; she can't swap it (a name, a number, a vowel-onset word like "investor").
+- If the note changed while the model ran, nothing is written.
+
+**Meeting prep.**
+- `meetingsDue`: a meeting series is identified by its title with emoji and punctuation stripped. A series is due today when:
+  - it was seen on 3+ different days in the last 42 days;
+  - an instance fell on today's weekday in the last 21 days;
+  - there's no note dated today yet.
+- At most 3 series per day. Meeting notes are found by frontmatter (`granola_id` / `attendees`) in the source folders.
+- One model call per morning when any are due. Inputs: the last instance of each meeting (what it's about), her priors, and this week's thoughts.
+- `checkPrep` keeps up to 3 points whose sources are her own words or position ids, plus one question and up to 5 "say once, slowly" names. It renders at the top of the digest as `## Before <meeting>`, linking 🗣️ Speaking Practice.
+- A digest is now written on a meeting morning even when nothing else is new.
+- Setting `meetingPrep` (default on).
+
+**Practice log.**
+- `state.prepped[date]` records prepped series.
+- The daily step `logPractice` matches each series to its meeting note on that date. It adds `| date | [[note\|title]] |  |  |  |` to the table under `## Practice log`, filling her first blank row or appending.
+- It's idempotent per meeting note. Series with no note are dropped after 3 days.
+- Setting `speakingPracticePath`.
+
+**Also:** the people page lookup in *Finish exercise* now uses `peopleFolder` (`p- Name` or `Name`) instead of a hardcoded `People pages/p- `.
+
+**Verified on real data (sandbox):**
+- Tuesday 11-24 prep found both IC series from her Granola history. Every point cited her positions or Sparks; the Decisions prep named last week's companies (HighBrain, Yirl) to say once.
+- Marking 11-17 Discussions as prepped and running the next morning filled her blank log row with the date and meeting link. A second run added nothing, and the rest of the note was unchanged.
+- Say it out loud: drafted on the new "Personal software as zines" Spark and on the frontier-map Pondering (appended, with stuck word "frontier"). Left "AI in the room", which has her own points, untouched.

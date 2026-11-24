@@ -446,3 +446,75 @@ ${renderRounds(ctx.rounds)}`;
 export function parsePonderingResponse(text: string): PonderingResponse {
   return parseWith(PonderingSchema, text, 'pondering response');
 }
+
+/* ─── Speaking ─────────────────────────────────────────────────────────── */
+
+const SPEAKING = `Kaya stutters and is practicing speaking. A point she can say well fits in ONE breath: at most ~12 words, plain spoken words, one idea, no lists or parentheses inside it. Pauses between points are fine; long run-on points are not.`;
+
+const PrepSchema = v.object({
+  prep: v.array(
+    v.object({
+      meeting: v.string(),
+      points: v.array(v.object({ text: v.string(), sources: v.optional(v.array(v.string()), []) })),
+      question: v.optional(v.string(), ''),
+      sayOnce: v.optional(v.array(v.string()), []),
+    }),
+  ),
+});
+
+export function buildPrepPrompt(input: {
+  meetings: { key: string; title: string; lastPath: string; lastExcerpt: string }[];
+  priors: PriorsPack;
+  thoughts: Thought[];
+}): Prompt {
+  const system = `You prep Kaya for her meetings today, two minutes before she walks in. ${SPEAKING}
+
+${KAYA_VOICE}
+
+For each meeting below:
+1. "points": exactly three talking points she could bring to THIS meeting, in her first person. Each must come from her OWN words or positions (her thoughts, takes, sparks, ponderings, posts, positions), never from someone else's claims. Pick what's live for her this week and relevant to what this meeting is about (see its last instance). "sources": the prior paths or position ids each point rests on, copied exactly.
+2. "question": the one question she's bringing to this meeting. Pointed and specific, one breath.
+3. "sayOnce": up to 5 names, companies or numbers she'll likely have to say in this meeting and can't swap for another word (from the points, the question, or the last instance). Prefer words that start with a vowel sound or a hard stop. [] if none.
+"meeting" is the meeting's key, copied exactly. No point is better than a weak one, but always try for three.
+${renderPriors(input.priors)}
+
+## Output
+Return only JSON: {"prep": [{"meeting": "<key>", "points": [{"text": "", "sources": [""]}], "question": "", "sayOnce": [""]}]}`;
+  const thoughts = input.thoughts.length
+    ? input.thoughts.map((t) => `<thought path="${t.path}" title="${t.title}">\n${t.newText}\n</thought>`).join('\n\n')
+    : '(none this week)';
+  const meetings = input.meetings
+    .map((m) => `<meeting key="${m.key}" title="${m.title}">\n<last-instance path="${m.lastPath}">\n${m.lastExcerpt}\n</last-instance>\n</meeting>`)
+    .join('\n\n');
+  return { system, user: `## Kaya's thoughts this week\n${thoughts}\n\n## Today's meetings\n${meetings}` };
+}
+
+export function parsePrepResponse(text: string): v.InferOutput<typeof PrepSchema> {
+  return parseWith(PrepSchema, text, 'prep response');
+}
+
+const SayItSchema = v.object({
+  points: v.array(v.string()),
+  stuckWord: v.optional(v.string(), ''),
+});
+
+export function buildSayItPrompt(input: { title: string; body: string; voiceRules: string[] }): Prompt {
+  const system = `You write the "Say it out loud" part of one of Kaya's notes: how she'd say this idea out loud to someone. ${SPEAKING}
+
+${KAYA_VOICE}
+
+Rules:
+- "points": exactly three points, in her first person, made ONLY from what this note says. Never add ideas she didn't write. Together they tell the idea in order: what it is, why it matters, what follows.
+- "stuckWord": one word from your points she can't swap for another (a name, a number, or a key word starting with a vowel sound like "interest", "insight", "investor"), the one most likely to catch. "" if none stands out.
+
+## Her voice rules
+${bulletList(input.voiceRules, '(none yet)')}
+
+## Output
+Return only JSON: {"points": ["", "", ""], "stuckWord": ""}`;
+  return { system, user: `<note title="${input.title}">\n${input.body}\n</note>` };
+}
+
+export function parseSayItResponse(text: string): v.InferOutput<typeof SayItSchema> {
+  return parseWith(SayItSchema, text, 'say-it response');
+}

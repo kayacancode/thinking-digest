@@ -29,6 +29,7 @@ const questionItem: DigestItem = {
 function render(items: DigestItem[], shifts = ''): string {
   return renderDigest({
     date: '2026-11-23',
+    prep: '',
     items,
     alsoNew: [{ source: 'Granola notes/standup', line: 'Logistics only.' }],
     shifts,
@@ -62,6 +63,7 @@ describe('renderDigest', () => {
   it('omits Also new when empty and appends shifts verbatim', () => {
     const md = renderDigest({
       date: '2026-11-27',
+      prep: '',
       items: [takeItem],
       alsoNew: [],
       shifts: '## Shifts this week\n\n### Moved\n- x',

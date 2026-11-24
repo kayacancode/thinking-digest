@@ -31,6 +31,9 @@ export interface Settings {
   exerciseFolder: string;
   ponderingFolder: string;
   sparksFolder: string;
+  peopleFolder: string; // people pages, "p- Name" or "Name"
+  meetingPrep: boolean; // "Before <meeting>" talking points for recurring meetings
+  speakingPracticePath: string; // without .md; gets a practice-log row after a prepped meeting
   maxRounds: number; // questions per thinking exercise
   thoughtFolders: string[]; // her own quick notes (read as her words, new lines only)
   privateTag: string; // notes tagged #<this> or with `<this>: true` are never read
@@ -62,6 +65,9 @@ export const DEFAULT_SETTINGS: Settings = {
   exerciseFolder: 'Thinking/Exercises',
   ponderingFolder: 'Pondering',
   sparksFolder: 'Thinking/Sparks',
+  peopleFolder: 'People pages',
+  meetingPrep: true,
+  speakingPracticePath: 'Thinking/🗣️ Speaking Practice',
   maxRounds: 5,
   thoughtFolders: ['Fleeting Notes'],
   privateTag: 'private',
@@ -295,6 +301,7 @@ export interface PluginState {
   metrics: MetricsRow[];
   thoughtSeen: Record<string, string[]>; // quick-note path -> hashes of lines already read
   threadDrafts: Record<string, Record<string, ThreadDraft>>; // digest date -> th id -> proposal
+  prepped: Record<string, { key: string; title: string }[]>; // digest date -> meetings prepped that day (until logged)
 }
 
 export const EMPTY_STATE = (): PluginState => ({
@@ -314,6 +321,7 @@ export const EMPTY_STATE = (): PluginState => ({
   metrics: [],
   thoughtSeen: {},
   threadDrafts: {},
+  prepped: {},
 });
 
 /** Lowercase, strip punctuation, collapse whitespace. Shared identity key for claims and rules. */

@@ -33,7 +33,7 @@ function drafts(): Record<string, DraftRecord> {
 }
 
 function editedDigest(): string {
-  let md = renderDigest({ date: DATE, items, alsoNew: [], shifts: '', positionsPath: 'Thinking/Positions' });
+  let md = renderDigest({ date: DATE, prep: '', items, alsoNew: [], shifts: '', positionsPath: 'Thinking/Positions' });
   md = md.replace('> Distribution beats product.\n> Every time.', '>   Distribution  beats product. Every\n> time.  ');
   md = md.replace('> Models will eat this.', '> Models will not eat this,\n> because the data is hers.');
   md = md.replace('> Is this a moat?\n\n**My answer:**\n', '> Is this a moat?\n\n**My answer:**\nOnly if it compounds.\n\nIt does not.\n');

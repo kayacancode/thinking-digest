@@ -86,6 +86,7 @@ function renderItem(item: DigestItem, positionsPath: string): string {
 
 export function renderDigest(input: {
   date: string;
+  prep: string; // "Before <meeting>" sections, '' when none
   items: DigestItem[];
   alsoNew: AlsoNewModel[];
   shifts: string;
@@ -94,6 +95,7 @@ export function renderDigest(input: {
   const blocks = [
     ['---', 'type: digest', `date: ${input.date}`, `items: ${input.items.length}`, '---'].join('\n'),
     `# Digest: ${headingDate(input.date)}`,
+    ...(input.prep.trim() ? [input.prep.trim()] : []),
     ...input.items.map((item) => renderItem(item, input.positionsPath)),
   ];
   if (input.alsoNew.length > 0) {
