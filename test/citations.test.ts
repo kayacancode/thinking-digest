@@ -14,7 +14,7 @@ const ctx = {
   ]),
   positionIds: new Set(['pos-7f3a', 'pos-19c2']),
   candidates: new Set(['Granola notes/A', 'Clippings/B', 'Clippings/C']),
-  ponderings: new Set(['Pondering/〰️ network shape']),
+  threadTargets: new Set(['Pondering/〰️ network shape', 'Thinking/Sparks/AI in the room']),
 };
 
 function item(overrides: Partial<DigestItemModel>): DigestItemModel {
@@ -98,24 +98,26 @@ describe('checkDigest', () => {
 describe('checkDigest threads', () => {
   const run = (threads: Parameters<typeof checkDigest>[0]['threads']) => checkDigest({ items: [], alsoNew: [], threads }, ctx).threads;
 
-  it('keeps a thread extending a real Pondering, dropping invented sources', () => {
+  it('keeps a thread extending a real Spark or Pondering, dropping invented sources', () => {
     const out = run([
-      { pondering: 'Pondering/〰️ network shape', title: 'ignored', bullets: [{ text: 'rooms matter', sources: ['Fleeting Notes/monday', 'Made/Up'] }] },
+      { target: 'Thinking/Sparks/AI in the room', title: 'ignored', oneLiner: 'ignored', bullets: [{ text: 'rooms matter', sources: ['Fleeting Notes/monday', 'Made/Up'] }] },
     ]);
-    expect(out).toEqual([{ pondering: 'Pondering/〰️ network shape', title: '', bullets: [{ text: 'rooms matter', sources: ['Fleeting Notes/monday'] }] }]);
+    expect(out).toEqual([{ target: 'Thinking/Sparks/AI in the room', title: '', oneLiner: '', bullets: [{ text: 'rooms matter', sources: ['Fleeting Notes/monday'] }] }]);
   });
 
-  it('turns an unknown Pondering into a new-Pondering proposal, which needs 2+ distinct sources', () => {
-    const weak = run([{ pondering: 'Pondering/〰️ invented', title: 'a thought ...', bullets: [{ text: 'x', sources: ['Fleeting Notes/monday'] }] }]);
+  it('turns an unknown target into a new-Spark proposal, which needs 2+ distinct sources', () => {
+    const weak = run([{ target: 'Thinking/Sparks/invented', title: 'A thought', oneLiner: 'why', bullets: [{ text: 'x', sources: ['Fleeting Notes/monday'] }] }]);
     expect(weak).toEqual([]);
     const recurring = run([
-      { pondering: null, title: 'a thought ...', bullets: [{ text: 'x', sources: ['Fleeting Notes/monday', 'Granola notes/A'] }] },
+      { target: null, title: 'A thought', oneLiner: 'why it grabs me', bullets: [{ text: 'x', sources: ['Fleeting Notes/monday', 'Granola notes/A'] }] },
     ]);
-    expect(recurring).toEqual([{ pondering: null, title: 'a thought ...', bullets: [{ text: 'x', sources: ['Fleeting Notes/monday', 'Granola notes/A'] }] }]);
+    expect(recurring).toEqual([
+      { target: null, title: 'A thought', oneLiner: 'why it grabs me', bullets: [{ text: 'x', sources: ['Fleeting Notes/monday', 'Granola notes/A'] }] },
+    ]);
   });
 
   it('drops bullets with no surviving source', () => {
-    expect(run([{ pondering: 'Pondering/〰️ network shape', title: '', bullets: [{ text: 'x', sources: ['Made/Up'] }] }])).toEqual([]);
+    expect(run([{ target: 'Pondering/〰️ network shape', title: '', oneLiner: '', bullets: [{ text: 'x', sources: ['Made/Up'] }] }])).toEqual([]);
   });
 });
 
@@ -146,7 +148,8 @@ describe('own words', () => {
         alsoNew: [],
         threads: [
           {
-            pondering: null,
+            target: null,
+            oneLiner: '',
             title: 'loops ...',
             bullets: [
               { text: 'meeting only', sources: ['Granola notes/A'] },
@@ -157,7 +160,7 @@ describe('own words', () => {
       },
       own,
     ).threads;
-    expect(threads).toEqual([{ pondering: null, title: 'loops ...', bullets: [{ text: 'recurring thought', sources: ['Fleeting Notes/monday', 'Granola notes/A'] }] }]);
+    expect(threads).toEqual([{ target: null, title: 'loops ...', oneLiner: '', bullets: [{ text: 'recurring thought', sources: ['Fleeting Notes/monday', 'Granola notes/A'] }] }]);
   });
 });
 

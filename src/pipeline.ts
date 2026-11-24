@@ -13,7 +13,7 @@ import { hashText, normalizeKey } from './types';
 import type { Env } from './io';
 import { stripFrontmatter } from './io';
 import { askJson, createCliLlm, createLlm, type Llm } from './anthropic';
-import { parseRss, parseExportZip, postNotePath, renderPostNote } from './substack';
+import { parseRss, parseExportZip, postNotePath, renderPostNote, sanitizeTitle } from './substack';
 import { applyClaims, findRetractions, livePositions, parseLedger, renderLedger } from './positions';
 import { acceptProposals, activeRuleTexts, findDeletedRules, parseVoiceRules, renderVoiceRules } from './voice';
 import { parseDigest, renderDigest, renderFailedDigest } from './digest';
@@ -37,7 +37,7 @@ import {
 import { renderShifts, rewriteRate } from './shifts';
 import { isShiftsDay, localDate, weekRange } from './scheduler';
 import { buildPriors, inFolder, listCandidates, listThoughts, ownWritingNotes } from './sources';
-import { addToPondering, parseTickedThreads, quickThoughtNote, renderThreads } from './thoughts';
+import { addToThread, parseTickedThreads, quickThoughtNote, renderSpark, renderThreads } from './thoughts';
 import { type Clip, clipPath, extractPage, isXUrl, parseXOembed, renderClipping, xOembedUrl } from './capture';
 import {
   type Round,
@@ -271,7 +271,7 @@ async function writeTake(ctx: Ctx, take: TakeOut): Promise<string> {
   return path;
 }
 
-/** Add the thread bullets she ticked in a digest to her Ponderings (existing or new). */
+/** Add the thread bullets she ticked in a digest to her Sparks and Ponderings, or start new Sparks. */
 async function applyThreads(ctx: Ctx, date: string, md: string): Promise<number> {
   const s = settingsOf(ctx);
   const drafts = ctx.state.threadDrafts[date] ?? {};
@@ -279,33 +279,23 @@ async function applyThreads(ctx: Ctx, date: string, md: string): Promise<number>
   for (const { id, text } of parseTickedThreads(md)) {
     const draft = drafts[id];
     if (!draft) continue;
-    const key = draft.pondering ?? `new:${draft.title}`;
+    const key = draft.target ?? `new:${draft.title}`;
     const group = groups.get(key) ?? { draft, bullets: [] };
     group.bullets.push({ text, sources: draft.sources });
     groups.set(key, group);
   }
   let added = 0;
   for (const { draft, bullets } of groups.values()) {
-    if (draft.pondering) {
-      const current = await ctx.env.vault.read(draft.pondering);
+    if (draft.target) {
+      const current = await ctx.env.vault.read(draft.target);
       if (current === null) {
-        ctx.env.log('pondering for thread no longer exists; skipped', { pondering: draft.pondering });
+        ctx.env.log('note for thread no longer exists; skipped', { target: draft.target });
         continue;
       }
-      await ctx.env.vault.write(draft.pondering, addToPondering(current, bullets, date));
+      await ctx.env.vault.write(draft.target, addToThread(current, bullets, date));
     } else {
-      const sources = [...new Set(bullets.flatMap((b) => b.sources))];
-      const path = await uniqueNotePath(ctx, `${s.ponderingFolder}/${ponderingNoteName(draft.title)}`);
-      await ctx.env.vault.write(
-        path,
-        renderPondering({
-          draft: { title: draft.title, heterodox: null, ideas: bullets.map((b) => b.text), insights: [], people: [], forkIdeas: [], steelman: '' },
-          date,
-          source: sources[0],
-          related: sources.slice(1),
-          peopleLinks: {},
-        }),
-      );
+      const path = await uniqueNotePath(ctx, `${s.sparksFolder}/${sanitizeTitle(draft.title, 100) || 'Untitled spark'}`);
+      await ctx.env.vault.write(path, renderSpark({ title: draft.title, oneLiner: draft.oneLiner, date, bullets }));
     }
     added += bullets.length;
   }
@@ -416,7 +406,7 @@ async function buildShiftsSection(ctx: Ctx, ledger: Ledger, llm: Llm): Promise<s
     if (inFolder(meta.path, s.takesFolder) && inWeek(String(meta.frontmatter?.['date'] ?? ''))) {
       const md = await ctx.env.vault.read(meta.path);
       if (md) takes.push({ path: meta.path, text: stripFrontmatter(md).replace(/%%[\s\S]*?%%/g, '').trim() });
-    } else if (inFolder(meta.path, 'Thinking/Sparks') && meta.frontmatter?.['status'] !== 'archived') {
+    } else if (inFolder(meta.path, s.sparksFolder) && meta.frontmatter?.['status'] !== 'archived') {
       const md = await ctx.env.vault.read(meta.path);
       if (md) sparks.push({ path: meta.path, body: stripFrontmatter(md).slice(0, 1500) });
     }
@@ -499,7 +489,12 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
       paths: new Set(vaultPaths),
       positionIds: new Set(ledger.positions.map((p) => p.id)),
       candidates: new Set(candidates.map((c) => c.path)),
-      ponderings: new Set(vaultPaths.filter((p) => inFolder(p, s.ponderingFolder))),
+      threadTargets: new Set(
+        ctx.env.vault
+          .list()
+          .filter((n) => inFolder(n.path, s.ponderingFolder) || (inFolder(n.path, s.sparksFolder) && n.frontmatter?.['status'] !== 'archived'))
+          .map((n) => n.path),
+      ),
       ownWords,
     });
 
@@ -520,7 +515,7 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
     const threadIds = new Set<string>();
     for (const t of checked.threads) {
       for (const b of t.bullets) {
-        threadDrafts[uniqueId('th', 4, threadIds, ctx.env.newHex)] = { pondering: t.pondering, title: t.title, text: b.text, sources: b.sources };
+        threadDrafts[uniqueId('th', 4, threadIds, ctx.env.newHex)] = { target: t.target, title: t.title, oneLiner: t.oneLiner, text: b.text, sources: b.sources };
       }
     }
 
@@ -708,7 +703,8 @@ export async function addQuickThought(ctx: Ctx, text: string): Promise<string> {
   const now = ctx.env.now();
   const date = localDate(now);
   const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  const folder = settingsOf(ctx).thoughtFolders[0] ?? 'Fleeting Notes';
+  const folder = settingsOf(ctx).thoughtFolders[0];
+  if (!folder) throw new Error('Add a quick-notes folder in Thinking Digest settings first.');
   const path = `${folder}/Thoughts ${date}`;
   const existing = await ctx.env.vault.read(path);
   await ctx.env.vault.write(path, quickThoughtNote(existing, { date, time, text: clean, createdIso: now.toISOString() }));
@@ -736,7 +732,7 @@ export async function runDaily(ctx: Ctx): Promise<string> {
   await step('Harvest', async () => {
     const r = await harvestAll(ctx);
     if (!r.digests) return null;
-    const threads = r.threadBullets ? ` Added ${r.threadBullets} thread bullet(s) to your Ponderings.` : '';
+    const threads = r.threadBullets ? ` Added ${r.threadBullets} thread bullet(s) to your Sparks and Ponderings.` : '';
     return `Harvested ${r.takes} take(s) from ${r.digests} digest(s).${threads}`;
   });
   await step('Positions', async () => {

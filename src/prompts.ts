@@ -70,8 +70,9 @@ const DigestItemSchema = v.object({
 });
 
 const ThreadSchema = v.object({
-  pondering: v.optional(v.nullable(v.string()), null),
+  target: v.optional(v.nullable(v.string()), null),
   title: v.optional(v.string(), ''),
+  oneLiner: v.optional(v.string(), ''),
   bullets: v.array(v.object({ text: v.string(), sources: v.optional(v.array(v.string()), []) })),
 });
 
@@ -134,7 +135,7 @@ ${renderPriors(priors)}
 8. Use ONLY the candidate paths, position ids and prior paths given here, copied exactly. Never make up a path or id.
 9. A candidate may contain a "> [!take] My first reaction" callout. That is Kaya's OWN words, written when she saved it. Build the take from it first: keep her stance and phrasing, tighten it, and cite the candidate path itself in "groundedIn" (plus any positions it relies on).
 10. "Kaya's thoughts" below are HER OWN quick notes from this week; the NEW part is what she wrote since the last digest. They are her words, like a first reaction: when an item touches one, build the take on it and cite the note's path in "groundedIn". Ignore todos, logistics and personal admin in them.
-11. "threads": how her thinking is building up this week, written into her Ponderings (prior notes with kind="pondering"). Each thread proposes 1–3 short bullets in her first person, made ONLY from her own words (thoughts, first reactions, takes, ponderings), never from a source's claims. Each bullet's "sources" lists EVERY note where that thought shows up this week: at least one of her own notes (thought, take, pondering, first reaction) first, plus any meetings where she raised it. A bullet backed only by a meeting or article is not hers and is dropped. Prefer extending an existing Pondering ("pondering": its exact path) when the thread fits one. Propose a NEW Pondering ("pondering": null, plus a "title" in her style ending with " ...") only when the same thought shows up in at least 2 different notes or items this week. No thread is better than a weak one; usually 0–3 threads.
+11. "threads": how her thinking is building up this week, written into her Sparks (prior notes with kind="spark": her open curiosities, each with a "What's new in my head" list) and Ponderings (kind="pondering": ideas she has worked through). Each thread proposes 1–3 short bullets in her first person, made ONLY from her own words (thoughts, first reactions, takes, sparks, ponderings), never from a source's claims. Each bullet's "sources" lists EVERY note where that thought shows up this week: at least one of her own notes (thought, take, spark, pondering, first reaction) first, plus any meetings where she raised it. A bullet backed only by a meeting or article is not hers and is dropped. Prefer extending an existing Spark or Pondering ("target": its exact path) when the thread fits one; a Spark fits a fresh question or hunch, a Pondering fits an idea she has already worked through. Propose a NEW Spark ("target": null, plus a short "title" naming the topic like her spark titles, and a "oneLiner": one sentence in her voice saying why it grabs her) only when the same thought shows up in at least 2 different notes or items this week. No thread is better than a weak one; usually 0–3 threads.
 
 ## Output
 Return only a JSON object, no prose, in this exact shape:
@@ -152,7 +153,7 @@ Return only a JSON object, no prose, in this exact shape:
     }
   ],
   "alsoNew": [{ "source": "<candidate path>", "line": "<one line>" }],
-  "threads": [{ "pondering": "<existing pondering path>" | null, "title": "<new pondering title, or empty>", "bullets": [{ "text": "<her idea, first person>", "sources": ["<path>"] }] }]
+  "threads": [{ "target": "<existing spark or pondering path>" | null, "title": "<new spark title, or empty>", "oneLiner": "<new spark one-liner, or empty>", "bullets": [{ "text": "<her idea, first person>", "sources": ["<path>"] }] }]
 }`;
 
   const sources = candidates

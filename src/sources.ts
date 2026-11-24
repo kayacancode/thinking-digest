@@ -56,19 +56,26 @@ export async function listCandidates(
       path: note.path,
       title: titleOf(note),
       created,
-      kind: inFolder(note.path, 'Granola notes') ? 'meeting' : inFolder(note.path, 'Clippings') ? 'clipping' : 'other',
+      kind: candidateKind(note, settings),
       excerpt: body.slice(0, settings.excerptChars),
     });
   }
   return { candidates, overflow: fresh.slice(MAX_CANDIDATES).map((x) => x.note.path) };
 }
 
+function candidateKind(note: NoteMeta, settings: Settings): Candidate['kind'] {
+  const fm = note.frontmatter ?? {};
+  if ('granola_id' in fm || 'attendees' in fm) return 'meeting';
+  if (inFolder(note.path, settings.clippingsFolder) || typeof fm['source'] === 'string') return 'clipping';
+  return 'other';
+}
+
 function priorKind(path: string, settings: Settings): PriorNote['kind'] | null {
   if (inFolder(path, settings.writingFolder)) return 'post';
   if (inFolder(path, settings.takesFolder)) return 'take';
-  if (inFolder(path, 'Pondering')) return 'pondering';
-  if (inFolder(path, 'Beliefs')) return 'belief';
-  if (settings.priorFolders.some((f) => inFolder(path, f))) return 'spark';
+  if (inFolder(path, settings.ponderingFolder)) return 'pondering';
+  if (inFolder(path, settings.sparksFolder)) return 'spark';
+  if (settings.priorFolders.some((f) => inFolder(path, f))) return 'note';
   return null;
 }
 

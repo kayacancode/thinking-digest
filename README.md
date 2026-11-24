@@ -4,7 +4,7 @@ An Obsidian plugin for thinking about what you read and hear. Capture anything y
 
 - **Capture anything.** Save links with *Add link* (articles, X posts, anything with a URL) or with Obsidian Web Clipper. Add a first reaction if you like; it seeds your take.
 - **Thinking exercises.** Choose *think about this* on any item: you get one question at a time, specific to the item and your positions. You answer in the note, and *Finish exercise* writes a 〰️ Pondering from your words only.
-- **Your running notes count.** Anything new you write in `Fleeting Notes` (or with *Quick thought*) is read as your own words. Takes build on it, and **Threads** propose bullets that grow your 〰️ Ponderings over the week. You tick what to keep. Notes tagged `#private` are never read.
+- **Your running notes count.** Anything new you write in `Fleeting Notes` (or with *Quick thought*) is read as your own words. Takes build on it, and **Threads** propose bullets that grow your ✨ Sparks and 〰️ Ponderings over the week. You tick what to keep. Notes tagged `#private` are never read.
 - **What they claim / My take.** Each item separates the source's claims from your take, so someone else's opinion never shows up as yours.
 - **Grounded.** Every draft cites your positions, posts or past takes. When it can't ground a take, it asks you one pointed question instead.
 - **Positions ledger** (`Thinking/Positions.md`). Your claims, one line each, extracted from your Substack, notes and takes. Newer views supersede older ones (the old ones are struck through, never deleted). Your edits always win.
@@ -15,7 +15,7 @@ An Obsidian plugin for thinking about what you read and hear. Capture anything y
 
 1. **See something** → *Add link* (paste a URL, with an optional first reaction), or clip it with Web Clipper into `Clippings/`. **Think something** → write it in `Fleeting Notes` as you already do, or use *Quick thought*.
 2. **Each morning** → the digest drafts your take on new clippings and meetings, separating "what they claim" from "my take".
-   The digest's **Threads** section proposes bullets for your Ponderings. A bullet extends an existing Pondering, or starts a new one when the same thought came up in 2+ notes or meetings that week. Tick the ones you want, edit them if you like, and they're added on the next run.
+   The digest's **Threads** section proposes bullets for your Sparks and Ponderings. A bullet extends an open Spark or a Pondering, or starts a new Spark (in your ✨ Spark template) when the same thought came up in 2+ notes or meetings that week. Tick the ones you want, edit them if you like, and they're added on the next run. A Spark becomes a Pondering when you run *think about this* on it.
 3. **The one or two that matter** → click *〰️ think about this* to answer 3–5 questions, then *Finish exercise* to get a Pondering.
 4. **Over time** → your Ponderings and edits update the positions ledger, and Friday's Shifts shows how your views moved.
 
@@ -32,7 +32,7 @@ Private by design: no notifications, no server. The only network calls are to th
 - **Model provider**
   - *Claude Code CLI* (the default) runs on your Claude subscription. The path to `claude` is auto-detected.
   - *Anthropic API key* uses an API key instead.
-- **Folders.** The defaults are `Granola notes` and `Clippings` as sources; `Pondering`, `Beliefs` and `Thinking/Sparks` as priors; `Writing/Substack` for imported posts. Change them in settings.
+- **Folders.** Settings → Folders has a picker (type to search your vault) for every folder: sources, excluded, quick notes, Sparks (`Thinking/Sparks`), Ponderings (`Pondering`), other folders of your thinking (`Beliefs`), and where the plugin writes. Subfolders are included.
 - **Capture**
   - **Add link**: run the command (or give it a hotkey). It pre-fills a URL from your clipboard. Full articles come through Readability; X posts come through X's public embed. Pages behind a login (LinkedIn, paywalls) save the title, description and link.
   - **Web Clipper** (desktop and iPhone Safari share sheet): install [Obsidian Web Clipper](https://obsidian.md/clipper) and set its note location to `Clippings`. Clipped notes feed the digest the same way.

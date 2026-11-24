@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { hashText } from '../src/types';
-import { addToPondering, diffThought, isPrivateNote, parseTickedThreads, quickThoughtNote, renderThreads } from '../src/thoughts';
+import { addToThread, diffThought, isPrivateNote, parseTickedThreads, quickThoughtNote, renderSpark, renderThreads } from '../src/thoughts';
 
 describe('diffThought', () => {
   const monday = 'Update\n- events are good to go\n\n- [ ] want to grow wealth';
@@ -44,14 +44,14 @@ describe('isPrivateNote', () => {
 
 describe('threads in the digest', () => {
   const drafts = {
-    'th-0001': { pondering: 'Pondering/〰️ network shape', title: '', text: 'your network is your frontier map', sources: ['Fleeting Notes/JB'] },
-    'th-0002': { pondering: null, title: 'one-off events beat community ...', text: 'events give energy, community drains it', sources: ['Fleeting Notes/JB', 'Granola notes/Jocelyn'] },
+    'th-0001': { target: 'Pondering/〰️ network shape', title: '', oneLiner: '', text: 'your network is your frontier map', sources: ['Fleeting Notes/JB'] },
+    'th-0002': { target: null, title: 'Events vs community', oneLiner: 'why', text: 'events give energy, community drains it', sources: ['Fleeting Notes/JB', 'Granola notes/Jocelyn'] },
   };
 
-  it('groups bullets under the Pondering they extend or the new one they propose', () => {
+  it('groups bullets under the note they extend or the new Spark they propose', () => {
     const md = renderThreads(drafts);
     expect(md).toContain('### Adds to [[Pondering/〰️ network shape]]\n- [ ] your network is your frontier map · [[Fleeting Notes/JB]] ^th-0001');
-    expect(md).toContain('### New pondering: one-off events beat community ...');
+    expect(md).toContain('### New spark: Events vs community');
     expect(renderThreads({})).toBe('');
   });
 
@@ -63,7 +63,7 @@ describe('threads in the digest', () => {
   });
 });
 
-describe('addToPondering', () => {
+describe('addToThread', () => {
   const template = [
     '---',
     'tags:',
@@ -78,20 +78,41 @@ describe('addToPondering', () => {
   ].join('\n');
 
   it('adds inside the "Ideas i’m pondering" callout, replacing the empty template bullet', () => {
-    const out = addToPondering(template, [{ text: 'rooms > recipes', sources: ['Fleeting Notes/JB'] }], '2026-11-24');
+    const out = addToThread(template, [{ text: 'rooms > recipes', sources: ['Fleeting Notes/JB'] }], '2026-11-24');
     expect(out).toContain('> [!faq]+  Ideas i’m pondering 〰️ [[Pondering ...|🤔]] \n> - rooms > recipes ([[Fleeting Notes/JB]])\n\n### Relevant Notes:');
     expect(out).not.toContain('I123');
   });
 
   it('keeps existing ideas and appends after them', () => {
     const withIdea = template.replace('> - I123', '> - an older idea');
-    const out = addToPondering(withIdea, [{ text: 'new one', sources: ['a'] }], '2026-11-24');
+    const out = addToThread(withIdea, [{ text: 'new one', sources: ['a'] }], '2026-11-24');
     expect(out).toContain('> - an older idea\n> - new one ([[a]])');
   });
 
   it('appends a dated section to free-form Ponderings without restructuring them', () => {
-    const out = addToPondering('[[Narrative Collapse]]\n\nsome notes\n', [{ text: 'x', sources: ['a', 'b'] }], '2026-11-24');
+    const out = addToThread('[[Narrative Collapse]]\n\nsome notes\n', [{ text: 'x', sources: ['a', 'b'] }], '2026-11-24');
     expect(out).toBe('[[Narrative Collapse]]\n\nsome notes\n\n### Threads (2026-11-24)\n- x ([[a]], [[b]])\n');
+  });
+
+  it("adds to a Spark's \"What's new in my head\" list, after her bullets, before the next section", () => {
+    const spark = "# AI in the room\n\n## What's new in my head\n- Hybraen: meeting brain ([[Granola notes/H]])\n- glasses\n\n## Why it spikes my interest\n- I'm living this\n";
+    const out = addToThread(spark, [{ text: 'restraint is the product', sources: ['Fleeting Notes/JB'] }], '2026-11-24');
+    expect(out).toBe(
+      "# AI in the room\n\n## What's new in my head\n- Hybraen: meeting brain ([[Granola notes/H]])\n- glasses\n- restraint is the product ([[Fleeting Notes/JB]])\n\n## Why it spikes my interest\n- I'm living this\n",
+    );
+  });
+
+  it("replaces an empty Spark template's placeholder bullet but keeps her prompt line", () => {
+    const fresh = "## What’s new in my head\nRaw and messy is fine. Dump it, shape it later.\n- \n\n## Why it spikes my interest\n- \n";
+    const out = addToThread(fresh, [{ text: 'x', sources: ['a'] }], '2026-11-24');
+    expect(out).toBe("## What’s new in my head\nRaw and messy is fine. Dump it, shape it later.\n- x ([[a]])\n\n## Why it spikes my interest\n- \n");
+  });
+
+  it('a new Spark is an open spark in her template, and later threads extend it', () => {
+    const md = renderSpark({ title: 'Events vs community', oneLiner: 'Events give energy; "community" drains it.', date: '2026-11-24', bullets: [{ text: 'first', sources: ['a', 'b'] }] });
+    expect(md).toMatch(/^---\ntype: spark\nstatus: open\ncreated: 2026-11-24\none_liner: "Events give energy; \\"community\\" drains it."\ntalk_to: \[\]\n---/);
+    const later = addToThread(md, [{ text: 'second', sources: ['c'] }], '2026-11-25');
+    expect(later).toContain("## What's new in my head\n- first ([[a]], [[b]])\n- second ([[c]])\n\n## Why it spikes my interest");
   });
 });
 

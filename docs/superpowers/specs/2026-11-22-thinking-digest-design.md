@@ -445,3 +445,30 @@ Each step writes its results before the next one starts. If a step fails, later 
 - Her real Fleeting Notes from this week (e.g. "Euler, NewCo") produced a new-Pondering thread that recurred across her note and two meetings.
 - After own-words enforcement, takes cite only positions and her notes.
 - A quick thought surfaced as a thread extending the existing frontier-map Pondering. Ticked with edited text, it landed inside the callout on harvest, and the proposal was cleared.
+
+## 20. Rev 5 (2026-11-23): Threads grow Sparks; every folder is a setting
+
+Kaya wants to actually use her Sparks (`Thinking/Sparks`, ✨ Spark template, listed on 🧭 Thinking Home). She chose "Sparks first".
+
+**Threads.**
+- `ThreadModel.target` replaces `pondering`. It can be any open Spark (`status` ≠ archived) or any Pondering.
+- An unknown or missing target becomes a **new Spark**: a title, a `oneLiner`, 2+ distinct sources.
+- Ticked bullets go in her template's places:
+  - for a Spark, the end of "## What's new in my head" (the empty `- ` placeholder is dropped; her prompt line is kept);
+  - for a Pondering, the "Ideas i’m pondering" callout;
+  - otherwise, `### Threads (date)`.
+- A new Spark is written in her ✨ Spark sections, with frontmatter `type: spark`, `status: open`, `created`, `one_liner`, `talk_to: []`, so it shows up in Thinking Home's "Open sparks". It's a Spark rather than a Pondering because that's where her new thoughts start. A Spark graduates to a Pondering via *think about this*.
+
+**Folders.**
+- New `sparksFolder` setting.
+- Ponderings and Sparks are always read as her own words.
+- `priorFolders` now means "other folders of your thinking" (default `Beliefs`; kind `note`).
+- No folder name is hardcoded anymore:
+  - candidate kind comes from frontmatter (`granola_id`/`attendees` → meeting, `source` or the clippings folder → clipping);
+  - Shifts reads `sparksFolder`;
+  - Quick thought errors if no quick-notes folder is set.
+- Settings → Folders uses a type-to-search folder picker (`AbstractInputSuggest` over vault folders). Folder lists show one removable row per folder and flag folders that don't exist.
+
+**Verified (sandbox, real vault):**
+- A quick thought on AI restraint was routed to the existing "AI in the room" Spark. Ticked with edited text, it landed at the end of "What's new in my head", and the rest of the Spark was unchanged.
+- A thought recurring in two notes proposed a new Spark, "Personal software as zines", with a one-liner. Ticking 2 of 3 bullets wrote an open Spark with only those 2.

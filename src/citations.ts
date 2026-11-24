@@ -6,8 +6,8 @@ interface DigestContext {
   paths: Set<string>;
   positionIds: Set<string>;
   candidates: Set<string>;
-  /** Existing Pondering paths; a thread may only extend one of these. */
-  ponderings?: Set<string>;
+  /** Existing Spark and Pondering paths; a thread may only extend one of these. */
+  threadTargets?: Set<string>;
   /**
    * Paths that hold Kaya's own words: her quick notes, posts, takes,
    * ponderings, sparks, and clippings with a first reaction. When given, a
@@ -20,9 +20,9 @@ interface DigestContext {
 
 /**
  * Keep only bullets with at least one real source (and one of her own, when
- * known). A thread extending an unknown Pondering becomes a new-Pondering
- * proposal, and a new Pondering needs 2+ distinct sources across its bullets
- * (a thought that recurs).
+ * known). A thread extending an unknown note becomes a new-Spark proposal, and
+ * a new Spark needs a title and 2+ distinct sources across its bullets (a
+ * thought that recurs).
  */
 function checkThreads(threads: ThreadModel[], ctx: DigestContext): ThreadModel[] {
   const out: ThreadModel[] = [];
@@ -32,12 +32,12 @@ function checkThreads(threads: ThreadModel[], ctx: DigestContext): ThreadModel[]
       .filter((b) => b.text !== '' && b.sources.length > 0 && (!ctx.ownWords || b.sources.some((s) => ctx.ownWords!.has(s))))
       .slice(0, 3);
     if (!bullets.length) continue;
-    const pondering = t.pondering && ctx.ponderings?.has(t.pondering) ? t.pondering : null;
-    if (pondering === null) {
+    const target = t.target && ctx.threadTargets?.has(t.target) ? t.target : null;
+    if (target === null) {
       const distinct = new Set(bullets.flatMap((b) => b.sources));
       if (distinct.size < 2 || !t.title.trim()) continue;
     }
-    out.push({ pondering, title: pondering ? '' : t.title.trim(), bullets });
+    out.push({ target, title: target ? '' : t.title.trim(), oneLiner: target ? '' : t.oneLiner.trim(), bullets });
   }
   return out;
 }

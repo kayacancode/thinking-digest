@@ -22,7 +22,7 @@ export interface Settings {
   writingFolder: string;
   sourceFolders: string[];
   excludedFolders: string[];
-  priorFolders: string[];
+  priorFolders: string[]; // other folders of her own thinking (Ponderings and Sparks are always read)
   digestFolder: string;
   takesFolder: string;
   positionsPath: string; // without .md
@@ -30,6 +30,7 @@ export interface Settings {
   clippingsFolder: string; // where "Add link" saves
   exerciseFolder: string;
   ponderingFolder: string;
+  sparksFolder: string;
   maxRounds: number; // questions per thinking exercise
   thoughtFolders: string[]; // her own quick notes (read as her words, new lines only)
   privateTag: string; // notes tagged #<this> or with `<this>: true` are never read
@@ -52,7 +53,7 @@ export const DEFAULT_SETTINGS: Settings = {
   writingFolder: 'Writing/Substack',
   sourceFolders: ['Granola notes', 'Clippings'],
   excludedFolders: ['Granola notes/transcripts'],
-  priorFolders: ['Pondering', 'Beliefs', 'Thinking/Sparks'],
+  priorFolders: ['Beliefs'],
   digestFolder: 'Thinking/Digests',
   takesFolder: 'Thinking/Takes',
   positionsPath: 'Thinking/Positions',
@@ -60,6 +61,7 @@ export const DEFAULT_SETTINGS: Settings = {
   clippingsFolder: 'Clippings',
   exerciseFolder: 'Thinking/Exercises',
   ponderingFolder: 'Pondering',
+  sparksFolder: 'Thinking/Sparks',
   maxRounds: 5,
   thoughtFolders: ['Fleeting Notes'],
   privateTag: 'private',
@@ -109,7 +111,7 @@ export interface Candidate {
 export interface PriorNote {
   path: string;
   title: string;
-  kind: 'post' | 'pondering' | 'belief' | 'spark' | 'take';
+  kind: 'post' | 'pondering' | 'spark' | 'take' | 'note';
   body: string; // truncated
   verdict?: 'kept' | 'rewrote' | 'answered'; // takes only
 }
@@ -190,10 +192,11 @@ export interface AlsoNewModel {
   line: string;
 }
 
-/** A proposed addition to one of her Ponderings, built from this week's thoughts and items. */
+/** A proposed addition to one of her Sparks or Ponderings, built from this week's thoughts and items. */
 export interface ThreadModel {
-  pondering: string | null; // existing Pondering path, or null for a new one
-  title: string; // new Pondering title (ignored when pondering is set)
+  target: string | null; // existing Spark or Pondering path, or null for a new Spark
+  title: string; // new Spark title (ignored when target is set)
+  oneLiner: string; // new Spark one_liner (ignored when target is set)
   bullets: { text: string; sources: string[] }[]; // her ideas, first person; sources = paths
 }
 
@@ -205,8 +208,9 @@ export interface DigestModel {
 
 /** One proposed thread bullet, stored until she ticks or ignores it. */
 export interface ThreadDraft {
-  pondering: string | null;
+  target: string | null;
   title: string;
+  oneLiner: string;
   text: string;
   sources: string[];
 }

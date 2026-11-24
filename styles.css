@@ -2,3 +2,8 @@
   --callout-color: var(--color-purple-rgb);
   --callout-icon: lucide-quote;
 }
+
+.td-folder-entry {
+  padding-left: 1.5em;
+  border-top: none;
+}

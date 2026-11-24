@@ -1,4 +1,4 @@
-import { App, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, htmlToMarkdown, normalizePath, requestUrl } from 'obsidian';
+import { AbstractInputSuggest, App, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, htmlToMarkdown, normalizePath, requestUrl } from 'obsidian';
 import { EMPTY_STATE, type PluginState, type Settings } from './types';
 import type { Env, Http, NoteMeta, VaultIO } from './io';
 import { randomHex } from './io';
@@ -318,6 +318,39 @@ export default class ThinkingDigestPlugin extends Plugin {
   }
 }
 
+/** Type-to-search over the vault's folders. */
+class FolderSuggest extends AbstractInputSuggest<string> {
+  constructor(
+    private vaultApp: App,
+    private input: HTMLInputElement,
+    private onPick: (path: string) => void,
+  ) {
+    super(vaultApp, input);
+  }
+
+  protected getSuggestions(query: string): string[] {
+    const q = query.toLowerCase();
+    return this.vaultApp.vault
+      .getAllLoadedFiles()
+      .filter((f): f is TFolder => f instanceof TFolder && !f.isRoot() && !f.path.startsWith('.'))
+      .map((f) => f.path)
+      .filter((p) => p.toLowerCase().includes(q))
+      .sort()
+      .slice(0, 100);
+  }
+
+  renderSuggestion(path: string, el: HTMLElement): void {
+    el.setText(path);
+  }
+
+  selectSuggestion(path: string): void {
+    this.setValue(path);
+    this.input.dispatchEvent(new Event('input'));
+    this.onPick(path);
+    this.close();
+  }
+}
+
 class DigestSettingTab extends PluginSettingTab {
   constructor(app: App, private plugin: ThinkingDigestPlugin) {
     super(app, plugin);
@@ -395,32 +428,67 @@ class DigestSettingTab extends PluginSettingTab {
       .addText((t) => t.setValue(s.substackUrl).onChange((v) => save({ substackUrl: v.trim() })));
 
     containerEl.createEl('h3', { text: 'Folders' });
-    const folder = (
-      name: string,
-      key: 'writingFolder' | 'digestFolder' | 'takesFolder' | 'positionsPath' | 'voiceRulesPath' | 'clippingsFolder' | 'exerciseFolder' | 'ponderingFolder',
-    ) =>
-      new Setting(containerEl).setName(name).addText((t) => t.setValue(s[key]).onChange((v) => v.trim() && save({ [key]: v.trim() })));
-    const folders = (name: string, key: 'sourceFolders' | 'excludedFolders' | 'priorFolders' | 'thoughtFolders', desc: string) =>
+    containerEl.createEl('p', { cls: 'setting-item-description', text: 'Pick folders from your vault: start typing to search. Subfolders are included.' });
+    const exists = (p: string) => this.app.vault.getAbstractFileByPath(normalizePath(p)) !== null;
+    type FolderKey = 'writingFolder' | 'digestFolder' | 'takesFolder' | 'clippingsFolder' | 'exerciseFolder' | 'ponderingFolder' | 'sparksFolder';
+    const folder = (name: string, key: FolderKey, desc = '') =>
       new Setting(containerEl)
         .setName(name)
         .setDesc(desc)
-        .addText((t) => t.setValue(s[key].join(', ')).onChange((v) => save({ [key]: list(v) })));
-    folders('Source folders', 'sourceFolders', 'New notes here become digest candidates.');
-    folders('Excluded folders', 'excludedFolders', 'Never candidates (e.g. transcripts).');
-    folders('Prior folders', 'priorFolders', 'Your own thinking used to ground drafts.');
-    folders('Quick-notes folders', 'thoughtFolders', 'Your running thoughts (Fleeting Notes). Read as your own words; new lines only. Quick thought writes to the first one.');
+        .addSearch((t) => {
+          t.setValue(s[key]).onChange((v) => v.trim() && save({ [key]: normalizePath(v.trim()) }));
+          new FolderSuggest(this.app, t.inputEl, (p) => void save({ [key]: p }));
+        });
+    const note = (name: string, key: 'positionsPath' | 'voiceRulesPath') =>
+      new Setting(containerEl).setName(name).addText((t) => t.setValue(s[key]).onChange((v) => v.trim() && save({ [key]: v.trim() })));
+    const folders = (name: string, key: 'sourceFolders' | 'excludedFolders' | 'priorFolders' | 'thoughtFolders', desc: string) => {
+      const add = async (raw: string) => {
+        const p = normalizePath(raw.trim());
+        if (!raw.trim() || s[key].includes(p)) return;
+        await save({ [key]: [...s[key], p] });
+        this.display();
+      };
+      new Setting(containerEl)
+        .setName(name)
+        .setDesc(desc)
+        .addSearch((t) => {
+          t.setPlaceholder('Add a folder…');
+          new FolderSuggest(this.app, t.inputEl, (p) => void add(p));
+          t.inputEl.addEventListener('keydown', (e) => e.key === 'Enter' && void add(t.getValue()));
+        });
+      for (const p of s[key]) {
+        new Setting(containerEl)
+          .setClass('td-folder-entry')
+          .setName(p)
+          .setDesc(exists(p) ? '' : 'Folder not found in this vault')
+          .addExtraButton((b) =>
+            b
+              .setIcon('x')
+              .setTooltip('Remove')
+              .onClick(async () => {
+                await save({ [key]: s[key].filter((x) => x !== p) });
+                this.display();
+              }),
+          );
+      }
+    };
+    folders('Source folders', 'sourceFolders', 'New notes here become digest items: what they claim, and your take.');
+    folders('Excluded folders', 'excludedFolders', 'Never read, even inside a source folder (e.g. transcripts).');
+    folders('Quick-notes folders', 'thoughtFolders', 'Your running thoughts, read as your own words (new lines only). Quick thought writes to the first one.');
+    folder('Sparks folder', 'sparksFolder', 'Threads add to your open Sparks, and new recurring thoughts start a Spark here.');
+    folder('Ponderings folder', 'ponderingFolder', 'Threads can add to Ponderings; Finish exercise writes one here.');
+    folders('Other folders of your thinking', 'priorFolders', 'Read to ground your takes (Sparks, Ponderings and your posts always are).');
     new Setting(containerEl)
       .setName('Private tag')
       .setDesc('Notes tagged with this (or with it set to true in frontmatter) are never read.')
       .addText((t) => t.setValue(s.privateTag).onChange((v) => save({ privateTag: v.trim().replace(/^#/, '') })));
     folder('Writing folder (Substack)', 'writingFolder');
+    folder('Clippings folder', 'clippingsFolder', 'Where Add link saves.');
     folder('Digest folder', 'digestFolder');
     folder('Takes folder', 'takesFolder');
-    folder('Positions note', 'positionsPath');
-    folder('Voice rules note', 'voiceRulesPath');
-    folder('Clippings folder ("Add link" saves here)', 'clippingsFolder');
     folder('Exercises folder', 'exerciseFolder');
-    folder('Ponderings folder', 'ponderingFolder');
+    note('Positions note', 'positionsPath');
+    note('Voice rules note', 'voiceRulesPath');
     new Setting(containerEl)
       .setName('Questions per exercise')
       .addSlider((sl) => sl.setLimits(3, 8, 1).setValue(s.maxRounds).setDynamicTooltip().onChange((v) => save({ maxRounds: v })));
