@@ -458,6 +458,7 @@ const PrepSchema = v.object({
       points: v.array(v.object({ text: v.string(), sources: v.optional(v.array(v.string()), []) })),
       question: v.optional(v.string(), ''),
       sayOnce: v.optional(v.array(v.string()), []),
+      alsoMet: v.optional(v.array(v.object({ name: v.string(), path: v.string(), line: v.optional(v.string(), '') })), []),
     }),
   ),
 });
@@ -478,16 +479,17 @@ ${KAYA_VOICE}
 
 For each meeting below:
 1. "points": exactly three talking points she'd say in THIS meeting, in her first person.
-   - When the meeting lists "new since last time", the points are about those: the companies and people she met since this meeting last happened, which is what she brings to the room. Pick the three most worth the room's time, preferring ones she has written about (takes, thoughts, first reactions, sparks). One company per point, as "<Name>: <what they do>, <her read>", one breath. What they do comes from the meeting note. Her read comes ONLY from her own words or positions; if she hasn't written a read on it, say plainly what's notable and add no opinion. Skip internal meetings, 1:1s and admin.
+   - When the meeting lists "new since last time", the points are about those: the companies and people she met since this meeting last happened, which is what she brings to the room. Pick the three most worth the room's time, in this order: (a) a decision or reply Betaworks owes a company before the next one of these meetings, soonest deadline first (e.g. "decision signal by Wednesday" beats "reply by the 30th"); (b) companies she has written about or linked in her own notes (takes, thoughts, first reactions, sparks, ponderings, company notes); (c) the newest. One company per point, as "<Name>: <what they do>, <her read or the ask>", one breath. What they do and any deadline come from the meeting note. Her read comes ONLY from her own words or positions; if she hasn't written a read on it, say plainly what's notable and add no opinion. Skip internal meetings, 1:1s, fundraising for other funds, and admin.
    - When nothing is new, use her own live thinking (thoughts, takes, sparks, positions) that fits what this meeting is about (see its last instances).
    "sources": the meeting path each point is about, plus every note or position id her read came from, copied exactly.
 2. "question": the one question she's bringing, about one of those companies or the meeting's topic. Pointed, one breath.
 3. "sayOnce": up to 5 names (companies, founders) or numbers from the points and question that she can't swap for another word. Prefer ones starting with a vowel sound or a hard stop. [] if none.
+4. "alsoMet": every OTHER company or founder from "new since last time" that isn't in the points (same rule: no internal meetings, 1:1s or admin), newest first, each as {"name": "<short company name>", "path": "<its path, copied exactly>", "line": "<what they do, plus any deadline or ask, one breath, no opinion>"}. [] if none.
 "meeting" is the meeting's key, copied exactly. Always try for three points.
 ${renderPriors(input.priors)}
 
 ## Output
-Return only JSON: {"prep": [{"meeting": "<key>", "points": [{"text": "", "sources": [""]}], "question": "", "sayOnce": [""]}]}`;
+Return only JSON: {"prep": [{"meeting": "<key>", "points": [{"text": "", "sources": [""]}], "question": "", "sayOnce": [""], "alsoMet": [{"name": "", "path": "", "line": ""}]}]}`;
   const thoughts = input.thoughts.length
     ? input.thoughts.map((t) => `<thought path="${t.path}" title="${t.title}">\n${t.newText}\n</thought>`).join('\n\n')
     : '(none this week)';

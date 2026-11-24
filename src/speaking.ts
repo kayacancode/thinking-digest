@@ -29,7 +29,7 @@ const SERIES_WINDOW_DAYS = 42;
 const WEEKDAY_WINDOW_DAYS = 21;
 const MIN_OCCURRENCES = 3;
 export const MAX_PREP_MEETINGS = 3;
-const MAX_NEW_MEETINGS = 12;
+const MAX_NEW_MEETINGS = 20;
 
 /** "💸weekly IC 🔒Decisions meeting" and "💸Weekly IC 🔒 Decisions meeting" are the same series. */
 export function seriesKey(title: string): string {
@@ -107,11 +107,12 @@ export function meetingsDue(meetings: MeetingNote[], today: string): DueMeeting[
 
 /**
  * One-off meetings since the last instance of a recurring one (the companies
- * and people she met that week), newest first. Other recurring meetings
- * (1:1s, standups) are left out.
+ * and people she met that week), newest first. Other recurring meetings (1:1s,
+ * standups: 3+ instances in the window) are left out; a second meeting with a
+ * company is a follow-up, not a series.
  */
 export function newMeetingsSince(meetings: MeetingNote[], due: DueMeeting, today: string): MeetingNote[] {
-  const recurring = new Set([...seriesInWindow(meetings, today)].filter(([, notes]) => notes.length >= 2).map(([key]) => key));
+  const recurring = new Set([...seriesInWindow(meetings, today)].filter(([, notes]) => notes.length >= MIN_OCCURRENCES).map(([key]) => key));
   return meetings
     .filter((m) => m.created > due.since && m.date < today && !recurring.has(seriesKey(m.title)))
     .sort((a, b) => b.created.localeCompare(a.created))
@@ -125,6 +126,7 @@ export interface PrepModel {
   points: { text: string; sources: string[] }[];
   question: string;
   sayOnce: string[];
+  alsoMet: { name: string; path: string; line: string }[]; // other companies met since last time, not in the points
 }
 
 /**
@@ -153,7 +155,11 @@ export function checkPrep(
       .slice(0, 3);
     if (!points.length) continue;
     const sayOnce = [...new Set(p.sayOnce.map((w) => w.trim()).filter(Boolean))].slice(0, 5);
-    out.push({ meeting: p.meeting, points, question: p.question.replace(/\s+/g, ' ').trim(), sayOnce });
+    const spoken = new Set(points.flatMap((pt) => pt.sources));
+    const alsoMet = p.alsoMet
+      .map((a) => ({ name: a.name.replace(/[|[\]]/g, ' ').replace(/\s+/g, ' ').trim(), path: a.path, line: a.line.replace(/\s+/g, ' ').trim() }))
+      .filter((a, i, all) => a.name !== '' && fresh.has(a.path) && !spoken.has(a.path) && all.findIndex((b) => b.path === a.path) === i);
+    out.push({ meeting: p.meeting, points, question: p.question.replace(/\s+/g, ' ').trim(), sayOnce, alsoMet });
   }
   return out;
 }
@@ -177,6 +183,9 @@ export function renderPrep(
       ];
       if (p.question) lines.push('', `**The one question I'm bringing:** ${p.question}`);
       if (p.sayOnce.length) lines.push('', `**Say once, slowly, out loud:** ${p.sayOnce.join(' · ')}`);
+      if (p.alsoMet.length) {
+        lines.push('', '**Also met since last time**', ...p.alsoMet.map((a) => `- [[${a.path}|${a.name}]]${a.line ? `: ${a.line}` : ''}`));
+      }
       return lines.join('\n');
     })
     .join('\n\n');

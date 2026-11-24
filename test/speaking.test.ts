@@ -11,6 +11,7 @@ const meetings = [
   note('2026-11-10', '14:00', '💸weekly IC 🔒Decisions meeting'),
   note('2026-11-10', '16:00', '💸weekly IC 🗣️Discussions meeting'),
   note('2026-11-16', '14:00', '💸weekly IC 🔒Decisions meeting'),
+  note('2026-11-09', '19:00', 'Kaya + JB'),
   note('2026-11-16', '19:00', 'Kaya + JB'),
   note('2026-11-17', '12:00', 'Agentic Nation with Rob'),
   note('2026-11-17', '16:00', '💸weekly IC 🗣️Discussions meeting'),
@@ -57,6 +58,7 @@ describe('newMeetingsSince', () => {
 describe('checkPrep', () => {
   const due = meetingsDue(meetings, '2026-11-24');
   const blackNile = 'Granola notes/2026-11-23, Black Nile AI platform for industrial plants with Sarah Khan';
+  const pollentia = 'Granola notes/2026-11-23, Pollentia __ Betaworks';
   it('keeps points about this week’s meetings or her own words, drops the rest', () => {
     const out = checkPrep(
       [
@@ -69,13 +71,19 @@ describe('checkPrep', () => {
           ],
           question: 'what would make us pass?',
           sayOnce: ['Black Nile', 'Black Nile', ' '],
+          // Pollentia stays listed; Black Nile is already a point; an invented path is dropped.
+          alsoMet: [
+            { name: 'Pollentia', path: pollentia, line: 'ship maintenance OS,  decision due Wednesday' },
+            { name: 'Black Nile', path: blackNile, line: '' },
+            { name: 'Made up', path: 'Granola notes/nope', line: '' },
+          ],
         },
-        { meeting: 'some other meeting', points: [{ text: 'x', sources: [blackNile] }], question: '', sayOnce: [] },
+        { meeting: 'some other meeting', points: [{ text: 'x', sources: [blackNile] }], question: '', sayOnce: [], alsoMet: [] },
       ],
       due,
       new Set(['Thinking/Takes/black nile']),
       new Set(['pos-7f3a']),
-      new Map([['weekly ic', new Set([blackNile])]]),
+      new Map([['weekly ic', new Set([blackNile, pollentia])]]),
     );
     expect(out).toEqual([
       {
@@ -86,6 +94,7 @@ describe('checkPrep', () => {
         ],
         question: 'what would make us pass?',
         sayOnce: ['Black Nile'],
+        alsoMet: [{ name: 'Pollentia', path: pollentia, line: 'ship maintenance OS, decision due Wednesday' }],
       },
     ]);
   });

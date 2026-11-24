@@ -609,7 +609,7 @@ export async function generateDigest(ctx: Ctx, opts: { dryRun: boolean }): Promi
 }
 
 const PREP_LAST_CHARS = 1500;
-const PREP_NEW_CHARS = 1200;
+const PREP_NEW_CHARS = 2400; // half from the start (what they do), half from the end (next steps, deadlines)
 
 async function buildPrep(
   ctx: Ctx,
@@ -621,7 +621,14 @@ async function buildPrep(
   ownWords: Set<string>,
   positionIds: Set<string>,
 ): Promise<PrepModel[]> {
-  const excerpt = async (path: string, chars: number) => stripFrontmatter((await ctx.env.vault.read(path)) ?? '').trim().slice(0, chars);
+  const excerpt = async (path: string, chars: number) => {
+    // Granola notes end with screenshot embeds; drop them so the tail is the Next Steps.
+    const body = stripFrontmatter((await ctx.env.vault.read(path)) ?? '')
+      .replace(/!\[\[[^\]]*\]\]|!\[[^\]]*\]\([^)]*\)/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    return body.length <= chars ? body : `${body.slice(0, chars / 2)}\n[…]\n${body.slice(-chars / 2)}`;
+  };
   const today = localDate(ctx.env.now());
   const meetings = [];
   const fresh = new Map<string, Set<string>>();

@@ -519,3 +519,17 @@ Kaya is practicing speaking (`Thinking/🗣️ Speaking Practice`, sessions with
 - Points are "<Name>: what they do, her read". The read comes only from her own words or positions; with no read, it's a plain note and no invented opinion. Meeting paths since the last instance are valid point sources (`checkPrep`'s `newMeetings`); her own notes stay valid too, as the fallback when nothing is new.
 - Each point renders with one ↗ (its first source, the meeting) because it's read aloud. The practice log matches any of the group's `keys` and links the earliest note that day.
 - Verified on real data (dry run for Tue 11-24): one "Before 💸weekly IC" block. Its points were Certonomous, Black Nile and Stasht, each with her read from her takes or Pondering. Question: "By your hundredth plant, how many weeks does a deploy take?" Say once: Certonomous · Black Nile · Stasht.
+
+**Rev 6.2 (2026-11-24).** She asked "what about Pollentia?" Pollentia was in the input but never chosen, for three reasons:
+- Granola notes end with screenshot embeds, so the 1,200-character excerpt never reached "Next Steps", where it says "decision signal by Wednesday".
+- There was no rule ranking deadlines.
+- With a 3-point cap, everything else disappeared without a trace.
+
+Fixes:
+- Excerpts strip `![[…]]`/`![](…)` embeds, then take half from the start and half from the end (2,400 characters).
+- Ranking: (a) decisions or replies Betaworks owes, soonest deadline first; (b) companies she's written about or linked; (c) the newest.
+- `alsoMet`: every other new company (`{name, path, line}`, the path validated against the new-meetings set and not already a point), rendered as a bulleted **Also met since last time** list.
+- A meeting series now needs 3+ instances to count as recurring, so a second meeting with a company (Hybraen 10/28 → 11/19) is still "new"; Kaya + JB (24 notes) stays excluded.
+- `MAX_NEW_MEETINGS` raised from 12 to 20.
+
+Verified (dry run, Tue 11-24): Pollentia is point 1 ("we owe a decision signal Wednesday"), then Black Nile and Somnus. The other 9 companies are listed with their next steps and deadlines (e.g. Constor before the Dec 2 Demo Day close).

@@ -1,7 +1,7 @@
 {
   "id": "thinking-digest",
   "name": "Thinking Digest",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "minAppVersion": "1.5.7",
   "description": "Daily digest that drafts your take on new meetings and clippings, grounded in your own writing, and learns your positions and voice from your edits.",
   "author": "Kaya Jones",
